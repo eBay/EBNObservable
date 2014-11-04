@@ -27,6 +27,14 @@
 	[self invalidatePropertyValue:EBNStringify(propertyName)]; \
 })
 
+#pragma mark Blocks
+
+	// The loader block is an optional way to load properties. We use the term 'loading' because it's
+	// not a getter--it doesn't return the value. It's not a setter--that's where the caller sets the value.
+	// The loader's job is to determine the correct value for the property and set it.
+typedef void (^EBNLazyLoaderBlock)(id blockSelf);
+
+
 #pragma mark EBNLazyLoader class
 
 @interface EBNLazyLoader : EBNObservable
@@ -34,11 +42,14 @@
 - (void) syntheticProperty:(NSString *) property;
 - (void) syntheticProperty:(NSString *) property dependsOn:(NSString *) keyPath;
 - (void) syntheticProperty:(NSString *) property dependsOnPaths:(NSArray *) keyPaths;
+- (void) syntheticProperty:(NSString *) property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock;
+
 
 // There's nothing preventing us from creating methods for dependent keypaths not rooted on self,
 // but I want to see how this works first.
 
 - (void) invalidatePropertyValue:(NSString *) property;
+- (void) invalidatePropertyValues:(NSSet *) properties;
 - (void) invalidateAllSyntheticProperties;
 
 	// Designed for use by macros. Takes the property to set up and all its dependent keyPaths

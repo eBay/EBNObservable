@@ -16,16 +16,24 @@
 
 #import "EBNObservableInternal.h"
 
-	// Private Local Functions
+
+static Class EBNShadowed_ClassForCoder(id self, SEL _cmd);
 template<typename T> void overrideSetterMethod(NSString *propName, Method setter, Method getter,
 		Class classToModify);
 extern "C" { void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info); }
 bool AmIBeingDebugged (void);
 
-	// Statics
-static NSMutableSet *EBN_ObserverBlocksToRunAfterThisEvent;
-static NSMutableSet *EBN_ObservedObjectKeepAlive;
-static std::map<Method, Class> EBNSwizzledSetterMethodTable;
+	// Keeping track of delayed blocks
+static NSMutableSet				*EBN_ObserverBlocksToRunAfterThisEvent;
+static NSMutableSet 			*EBN_ObservedObjectKeepAlive;
+
+	// Shadow classes--private subclasses that we create to implement overriding setter methods
+	// Both of these dictionaries hold EBNShadowedClassInfo objects, and are keyed with Class objects
+NSMutableDictionary				*EBNBaseClassToShadowInfoTable;
+NSMutableDictionary				*EBNShadowedClassToInfoTable;
+
+	// Not used for anything other than as a @synchronize token.
+void							*EBNObservableSynchronizationToken;
 
 /***********************************************************************************/
 
@@ -34,10 +42,28 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 
 - (NSString *) debugDescription
 {
-	NSString *returnStr = [NSString stringWithFormat:@"Path:\"%@\": %@", keyPath, [blockInfo debugDescription]];
+	NSString *returnStr = [NSString stringWithFormat:@"Path:\"%@\": %@", self->_keyPath,
+			[self->_blockInfo debugDescription]];
 	return returnStr;
 }
 
+@end
+
+/***********************************************************************************/
+
+#pragma mark -
+@implementation EBNShadowedClassInfo
+
+- (instancetype) initWithClass:(Class) newShadowClass
+{
+	if (self = [super init])
+	{
+		self->_shadowClass = newShadowClass;
+		self->_getters = [[NSMutableSet alloc] init];
+		self->_setters = [[NSMutableSet alloc] init];
+	}
+	return self;
+}
 @end
 
 #pragma mark -
@@ -125,16 +151,19 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	}
 	
 	// Find all the entries to be removed
-	NSMapTable *observerTable = self->observedMethods[propName];
-	for (EBNKeypathEntryInfo *entry in observerTable)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		if (entry->blockInfo->weakObserver == observer && [keyPath isEqualToArray:entry->keyPath])
+		NSMapTable *observerTable = self->_observedMethods[propName];
+		for (EBNKeypathEntryInfo *entry in observerTable)
 		{
-			NSInteger index = [[observerTable objectForKey:entry] integerValue];
-			if (index == 0)
+			if (entry->_blockInfo->_weakObserver_forComparisonOnly == observer && [keyPath isEqualToArray:entry->_keyPath])
 			{
-				// We've found the right entry. Call the recursive remove method.
-				[entriesToRemove addObject:entry];
+				NSInteger index = [[observerTable objectForKey:entry] integerValue];
+				if (index == 0)
+				{
+					// We've found the right entry. Call the recursive remove method.
+					[entriesToRemove addObject:entry];
+				}
 			}
 		}
 	}
@@ -169,21 +198,23 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	int removedBlockCount = 0;
 	NSMutableSet *entriesToRemove = [[NSMutableSet alloc] init];
 
-	for (NSString *propertyKey in [observedMethods allKeys])
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMapTable *observerTable = observedMethods[propertyKey];
-		
-		for (EBNKeypathEntryInfo *entryInfo in observerTable)
+		for (NSString *propertyKey in [self->_observedMethods allKeys])
 		{
-			// We're only looking for the blocks for which this is the observed object.
-			NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
-			if (entryInfo->blockInfo->weakObserver == observer && index == 0)
+			NSMapTable *observerTable = self->_observedMethods[propertyKey];
+			
+			for (EBNKeypathEntryInfo *entryInfo in observerTable)
 			{
-				[entriesToRemove addObject:entryInfo];
-				++removedBlockCount;
+				// We're only looking for the blocks for which this is the observed object.
+				NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
+				if (entryInfo->_blockInfo->_weakObserver_forComparisonOnly == observer && index == 0)
+				{
+					[entriesToRemove addObject:entryInfo];
+					++removedBlockCount;
+				}
 			}
 		}
-	
 	}
 
 	for (EBNKeypathEntryInfo *entryInfo in entriesToRemove)
@@ -215,21 +246,23 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	int removedBlockCount = 0;
 	NSMutableSet *entriesToRemove = [[NSMutableSet alloc] init];
 
-	for (NSString *propertyKey in [observedMethods allKeys])
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMapTable *observerTable = observedMethods[propertyKey];
-		
-		for (EBNKeypathEntryInfo *entryInfo in observerTable)
+		for (NSString *propertyKey in [self->_observedMethods allKeys])
 		{
-			// Match on the entries where the block that gets run is the indicated block
-			NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
-			if (entryInfo->blockInfo->copiedBlock == stopBlock && index == 0)
+			NSMapTable *observerTable = self->_observedMethods[propertyKey];
+			
+			for (EBNKeypathEntryInfo *entryInfo in observerTable)
 			{
-				[entriesToRemove addObject:entryInfo];
-				++removedBlockCount;
+				// Match on the entries where the block that gets run is the indicated block
+				NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
+				if (entryInfo->_blockInfo->_copiedBlock == stopBlock && index == 0)
+				{
+					[entriesToRemove addObject:entryInfo];
+					++removedBlockCount;
+				}
 			}
 		}
-	
 	}
 	
 	for (EBNKeypathEntryInfo *entryInfo in entriesToRemove)
@@ -287,9 +320,9 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 - (void) manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue
 {
 	NSMapTable *observerTable = nil;
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		observerTable = [self->observedMethods[propertyName] copy];
+		observerTable = [self->_observedMethods[propertyName] copy];
 	}
 	
 	if (!observerTable)
@@ -299,9 +332,9 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	{
 		// If the property that changed had a observation on it that was in the
 		// middle of the keypath's observation, fix up the observation keypath.
-		EBNObservation *blockInfo = entry->blockInfo;
+		EBNObservation *blockInfo = entry->_blockInfo;
 		NSInteger index = [[observerTable objectForKey:entry] integerValue];
-		if (index != [entry->keyPath count] - 1)
+		if (index != [entry->_keyPath count] - 1)
 		{
 			id newValue = [self valueForKeyEBN:propertyName];
 			if (newValue != prevValue)
@@ -312,19 +345,19 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		}
 
 		// Make sure the observed object still exists before calling/scheduling blocks
-		EBNObservable *strongObserved = blockInfo->weakObserved;
+		EBNObservable *strongObserved = blockInfo->_weakObserved;
 		if (strongObserved)
 		{
 			// Execute any immediate blocks
-			if (blockInfo->copiedImmedBlock)
+			if (blockInfo->_copiedImmedBlock)
 			{
 				[blockInfo executeWithPreviousValue:prevValue];
 			}
 		
 			// Schedule any delayed blocks; also keep the observed object alive until the delayed block is called.
-			if (blockInfo->copiedBlock)
+			if (blockInfo->_copiedBlock)
 			{
-				@synchronized(EBN_ObserverBlocksToRunAfterThisEvent)
+				@synchronized(EBNObservableSynchronizationToken)
 				{
 					[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
 					[EBN_ObservedObjectKeepAlive addObject:strongObserved];
@@ -349,9 +382,9 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	if (newValue != prevValue || [propertyName isEqualToString:@"*"])
 	{
 		NSMapTable *observerTable = nil;
-		@synchronized(self)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			observerTable = [self->observedMethods[propertyName] copy];
+			observerTable = [self->_observedMethods[propertyName] copy];
 		}
 		
 		if (!observerTable)
@@ -361,28 +394,28 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		{
 			// If the property that changed had a observation on it that was in the
 			// middle of the keypath's observation, fix up the observation keypath.
-			EBNObservation *blockInfo = entry->blockInfo;
+			EBNObservation *blockInfo = entry->_blockInfo;
 			NSInteger index = [[observerTable objectForKey:entry] integerValue];
-			if (index != [entry->keyPath count] - 1)
+			if (index != [entry->_keyPath count] - 1)
 			{
 				[prevValue removeKeypath:entry atIndex:index + 1];
 				[newValue createKeypath:entry atIndex:index + 1];
 			}
 
 			// Make sure the observed object still exists before calling/scheduling blocks
-			EBNObservable *strongObserved = blockInfo->weakObserved;
+			EBNObservable *strongObserved = blockInfo->_weakObserved;
 			if (strongObserved)
 			{
 				// Execute any immediate blocks
-				if (blockInfo->copiedImmedBlock)
+				if (blockInfo->_copiedImmedBlock)
 				{
 					[blockInfo executeWithPreviousValue:prevValue];
 				}
 			
 				// Schedule any delayed blocks; also keep the observed object alive until the delayed block is called.
-				if (blockInfo->copiedBlock)
+				if (blockInfo->_copiedBlock)
 				{
-					@synchronized(EBN_ObserverBlocksToRunAfterThisEvent)
+					@synchronized(EBNObservableSynchronizationToken)
 					{
 						[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
 						[EBN_ObservedObjectKeepAlive addObject:strongObserved];
@@ -407,9 +440,9 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	// We don't want to count them.
 	[self reapBlocks];
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMutableSet *observerTable = observedMethods[propertyName];
+		NSMutableSet *observerTable = self->_observedMethods[propertyName];
 		NSUInteger numObservers = [observerTable count];
 		return numObservers;
 	}
@@ -426,7 +459,13 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 {
 	[self reapBlocks];
 	
-	return [observedMethods allKeys];
+	NSArray *properties = nil;
+	@synchronized(EBNObservableSynchronizationToken)
+	{
+		properties = [self->_observedMethods allKeys];
+	}
+	
+	return properties;
 }
 
 #pragma mark Private
@@ -459,6 +498,10 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 			// And, this is our set of objects to keep from getting dealloc'ed until we can
 			// send their observer messages.
 			EBN_ObservedObjectKeepAlive = [[NSMutableSet alloc] init];
+
+			//
+			EBNShadowedClassToInfoTable = [[NSMutableDictionary alloc] init];
+			EBNBaseClassToShadowInfoTable = [[NSMutableDictionary alloc] init];
 		});
 	}
 }
@@ -473,9 +516,9 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 {
 	NSMutableSet *objectsToNotify = [NSMutableSet set];
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSMapTable *observerTable in [observedMethods allValues])
+		for (NSMapTable *observerTable in [self->_observedMethods allValues])
 		{
 			for (EBNKeypathEntryInfo *entryInfo in [observerTable copy])
 			{
@@ -490,7 +533,7 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 					// Only notify using DeallocProtocol for observations where this object is the base
 					// of the keypath. That is, observer notifications where the notification itself
 					// is going away because this object is the root of the keypath.
-					id object = entryInfo->blockInfo->weakObserver;
+					id object = entryInfo->_blockInfo->_weakObserver;
 					if (object && [object respondsToSelector:@selector(observedObjectHasBeenDealloced:endingObservation:)])
 					{
 						[objectsToNotify addObject:entryInfo];
@@ -510,10 +553,10 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	
 	for (EBNKeypathEntryInfo *entry in objectsToNotify)
 	{
-		id observer = entry->blockInfo->weakObserver;
+		id observer = entry->_blockInfo->_weakObserver;
 		NSMutableString *keyPathStr = [[NSMutableString alloc] init];
 		NSString *separator = @"";
-		for (NSString *prop in entry->keyPath)
+		for (NSString *prop in entry->_keyPath)
 		{
 			[keyPathStr appendFormat:@"%@%@", separator, prop];
 			separator = @".";
@@ -530,12 +573,12 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 {
 	// Create our keypath entry
 	EBNKeypathEntryInfo	*entryInfo = [[EBNKeypathEntryInfo alloc] init];
-	entryInfo->keyPath = [keyPathString componentsSeparatedByString:@"."];
-	entryInfo->blockInfo = blockInfo;
+	entryInfo->_keyPath = [keyPathString componentsSeparatedByString:@"."];
+	entryInfo->_blockInfo = blockInfo;
 	
-	for (int index = 0; index < [entryInfo->keyPath count] - 1; ++index)
+	for (int index = 0; index < [entryInfo->_keyPath count] - 1; ++index)
 	{
-		EBAssert(![entryInfo->keyPath[index] isEqualToString:@"*"],
+		EBAssert(![entryInfo->_keyPath[index] isEqualToString:@"*"],
 				@"Only the final part of a keypath can use the '*' operator.");
 	}
 
@@ -568,7 +611,7 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 - (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	// Get the property name we'll be adding observation on
-	NSString *propName = entryInfo->keyPath[index];
+	NSString *propName = entryInfo->_keyPath[index];
 	
 	// If this is a '*' observation, observe all properties via recusive calls
 	if ([propName isEqualToString:@"*"])
@@ -631,21 +674,21 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		forProperty:(NSString *) propName
 {
 	bool success = false;
+	bool tableWasEmpty = false;
 
 	// Check that this class is set up to observe the given property. That is, check that we've
 	// swizzled the setter.
-	[[self class] swizzleImplementationForSetter:propName];
+	[self swizzleImplementationForSetter:propName];
 
-	// Make sure we've initialized our observed methods dictionary and properties set
-	if (!self->observedMethods)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		self->observedMethods = [[NSMutableDictionary alloc] init];
-	}
-		
-	bool tableWasEmpty = false;
-	@synchronized (self)
-	{
-		NSMapTable *observerTable = observedMethods[propName];
+		// Make sure we've initialized our observed methods dictionary and properties set
+		if (!self->_observedMethods)
+		{
+			self->_observedMethods = [[NSMutableDictionary alloc] init];
+		}
+	
+		NSMapTable *observerTable = self->_observedMethods[propName];
 
 		// Check for the case where this entryInfo is already in the table. Since
 		// there's one entryInfo for each keypath, this likely indicates a property loop
@@ -657,16 +700,18 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		}
 		
 		// Check for the case where the observer is already observing this property
-		id observer = entryInfo->blockInfo->weakObserver;
-		for (EBNKeypathEntryInfo *entry in observerTable)
+		id observer = entryInfo->_blockInfo->_weakObserver;
+		if (observer)
 		{
-			if (entry->blockInfo->weakObserver == observer && [entry->keyPath isEqualToArray:entryInfo->keyPath])
+			for (EBNKeypathEntryInfo *entry in observerTable)
 			{
-				EBAssert(observer, @"The observer for this property is nil? That's not good");
-				EBLogContext(kLoggingContextOther,
-						@"%@: While adding a new observer: The observer object (%@) is already "
-						@"observing the property %@. This is sometimes okay, but more often an error.",
-						[self class], [observer debugDescription], propName);
+				if (entry->_blockInfo->_weakObserver == observer && [entry->_keyPath isEqualToArray:entryInfo->_keyPath])
+				{
+					EBLogContext(kLoggingContextOther,
+							@"%@: While adding a new observer: The observer object (%@) is already "
+							@"observing the property %@. This is sometimes okay, but more often an error.",
+							[self class], [observer debugDescription], propName);
+				}
 			}
 		}
 	
@@ -675,14 +720,14 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		if (!observerTable)
 		{
 			observerTable = [NSMapTable strongToStrongObjectsMapTable];
-			observedMethods[propName] = observerTable;
+			self->_observedMethods[propName] = observerTable;
 			tableWasEmpty = true;
 		}
 				
 		[observerTable setObject:[NSNumber numberWithInteger:index] forKey:entryInfo];
 	}
 	
-	if (index == [entryInfo->keyPath count] - 1)
+	if (index == [entryInfo->_keyPath count] - 1)
 	{
 		// If this is the endoint, we're done.
 		success = true;
@@ -725,15 +770,21 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 */
 - (bool) removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
-	if (index >= [entryInfo->keyPath count])
+	if (index >= [entryInfo->_keyPath count])
 		return false;
 
-	NSString *propName = entryInfo->keyPath[index];
+	NSString *propName = entryInfo->_keyPath[index];
 	
-	// If this is a '*' observation, remove all observations via recusive calls
+	// If this is a '*' observation, remove all observations via recursive calls
 	if ([propName isEqualToString:@"*"])
 	{
-		for (NSString *property in [self->observedMethods allKeys])
+		NSArray *properties = nil;
+		@synchronized(EBNObservableSynchronizationToken)
+		{
+			properties = [self->_observedMethods allKeys];
+		}
+		
+		for (NSString *property in properties)
 		{
 			[self removeKeypath:entryInfo atIndex:index forProperty:property];
 		}
@@ -763,23 +814,23 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	bool observerTableRemoved = false;
 
 	// Remove the entry from the observer table for the given property.
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMapTable *observerTable = self->observedMethods[propName];
+		NSMapTable *observerTable = self->_observedMethods[propName];
 		[observerTable removeObjectForKey:entryInfo];
 		
 		// Could check for duplicate entries and reap zeroed entries here
 		
 		if (![observerTable count])
 		{
-			[observedMethods removeObjectForKey:propName];
+			[self->_observedMethods removeObjectForKey:propName];
 			observerTableRemoved = true;
 		}
 	}
 	
 	// If this isn't the endpoint property, recurse--call this same method in the
 	// next object in the keypath
-	if (index < [entryInfo->keyPath count] - 1)
+	if (index < [entryInfo->_keyPath count] - 1)
 	{
 		EBNObservable *next = [self valueForKeyEBN:propName];
 		if (next)
@@ -815,14 +866,14 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	int removedBlockCount = 0;
 	NSMutableSet *entriesToRemove = [[NSMutableSet alloc] init];
 
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in [observedMethods allKeys])
+		for (NSString *propertyKey in [self->_observedMethods allKeys])
 		{
-			NSMapTable *observerTable = observedMethods[propertyKey];
+			NSMapTable *observerTable = self->_observedMethods[propertyKey];
 			for (EBNKeypathEntryInfo *entry in observerTable)
 			{
-				if (!entry->blockInfo->weakObserver)
+				if (!entry->_blockInfo->_weakObserver)
 				{
 					[entriesToRemove addObject:entry];
 				}
@@ -832,7 +883,7 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		
 	for (EBNKeypathEntryInfo *entry in entriesToRemove)
 	{
-		EBNObservable *strongObserved = entry->blockInfo->weakObserved;
+		EBNObservable *strongObserved = entry->_blockInfo->_weakObserved;
 		if (strongObserved)
 		{
 			[strongObserved removeKeypath:entry atIndex:0];
@@ -852,62 +903,38 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 */
 + (SEL) selectorForPropertySetter:(NSString *) propertyName
 {
-	NSString *setterName = nil;
-
 	// If this is an actual declared property, get the property, then its property attributes string,
 	// then pull out the setter method from the string.
-	objc_property_t prop = class_getProperty(self, [propertyName UTF8String]);
+	const char *propName = [propertyName UTF8String];
+	objc_property_t prop = class_getProperty(self, propName);
 	if (prop)
 	{
-		NSString *propStr = [NSString stringWithUTF8String:property_getAttributes(prop)];
-		NSRange setterStartRange =[propStr rangeOfString:@",S"];
-		if (setterStartRange.location != NSNotFound)
+		char *propString = property_copyAttributeValue(prop, "S");
+		if (propString)
 		{
-			// The property attribute string has a bunch of stuff in it, we're looking for a substring
-			// in the format ",SsetVariable:," or ",SsetVariable:" at the end of the string
-			NSInteger searchStart = setterStartRange.location + setterStartRange.length;
-			NSRange nextCommaSearchRange = NSMakeRange(searchStart, [propStr length] - searchStart);
-			NSRange nextComma = [propStr rangeOfString:@"," options:0 range:nextCommaSearchRange];
-			if (nextComma.location == NSNotFound)
-				setterName = [propStr substringWithRange:nextCommaSearchRange];
-			else
-				setterName = [propStr substringWithRange:NSMakeRange(searchStart, nextComma.location - searchStart)];
-
-			// See if the setter method name actually has a Method
-			SEL methodSel = NSSelectorFromString(setterName);
-			Method setterMethod = class_getInstanceMethod(self, methodSel);
-			if (setterMethod && method_getNumberOfArguments(setterMethod) == 3)
+			SEL methodSel = sel_registerName(propString);
+			if (methodSel && [self instancesRespondToSelector:methodSel])
+			{
 				return methodSel;
+			}
 		}
 	}
 	
 	// Even if it's not a declared property, we can still sometimes find the setter.
 	// Try to guess the setter name by prepending "set" and uppercasing the first char of the propname
-	unichar firstCharUpper = [[propertyName uppercaseString] characterAtIndex:0];
-	setterName = [NSString stringWithFormat:@"set%C%@:", firstCharUpper,
-			[propertyName substringFromIndex:1]];
-
-	// See if the setter method name actually has a Method
-	SEL methodSel = NSSelectorFromString(setterName);
-	Method setterMethod = class_getInstanceMethod(self, methodSel);
-
-//	NSMethodSignature *signature = [self instanceMethodSignatureForSelector:methodSel];
+	char setterName[200] = "_set";
+	strncpy(setterName + 4, propName, 190);
+	setterName[4] = toupper(setterName[4]);
+	strncat(setterName, ":", 1);
 	
-	// Sometimes setters use the "_setUpppercase" format. Try prepending an underscore
-	if (!setterMethod || method_getNumberOfArguments(setterMethod) != 3)
-	{
-		setterName = [NSString stringWithFormat:@"_%@", setterName];
-		methodSel = NSSelectorFromString(setterName);
-		setterMethod = class_getInstanceMethod(self, methodSel);
-	}
+	SEL methodSel = sel_registerName(setterName + 1);
+	if (methodSel && [self instancesRespondToSelector:methodSel])
+		return methodSel;
+	methodSel = sel_registerName(setterName);
+	if (methodSel && [self instancesRespondToSelector:methodSel])
+		return methodSel;
 	
-	// If we didn't find a method for the given selector, return nil;
-	if (!setterMethod || method_getNumberOfArguments(setterMethod) != 3)
-	{
-		return nil;
-	}
-	
-	return methodSel;
+	return nil;
 }
 
 /****************************************************************************************************
@@ -922,6 +949,14 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	NSString *getterName = nil;
 	SEL methodSel;
 	Method getterMethod;
+
+	// Check the case where the getter has the same name as the property
+	methodSel = NSSelectorFromString(propertyName);
+	getterMethod = class_getInstanceMethod(self, methodSel);
+	if (getterMethod && method_getNumberOfArguments(getterMethod) == 2)
+	{
+		return methodSel;
+	}
 
 	// If the property has a custom getter, go find it by getting the property attribute string
 	objc_property_t prop = class_getProperty(self, [propertyName UTF8String]);
@@ -949,14 +984,6 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 		}
 	}
 	
-	// Next, check the case where the getter has the same name as the property
-	methodSel = NSSelectorFromString(propertyName);
-	getterMethod = class_getInstanceMethod(self, methodSel);
-	if (getterMethod && method_getNumberOfArguments(getterMethod) == 2)
-	{
-		return methodSel;
-	}
-
 	// Try prepending an underscore to the getter name
 	getterName = [NSString stringWithFormat:@"_%@", propertyName];
 	methodSel = NSSelectorFromString(getterName);
@@ -965,6 +992,137 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	{
 		return methodSel;
 	}
+	
+	return nil;
+}
+
+/****************************************************************************************************
+	prepareToObserveProperty
+	
+	This returns the class where we should add/replace getter and setter methods in order to 
+	implement observation.
+	
+	This class should be a runtime-created subclass of the given class. It could be a class created
+	by Apple's KVO, or one created by us.
+*/
+- (Class) prepareToObserveProperty:(NSString *)propertyName isSetter:(bool) isSetter
+{
+	//
+	Class curClass = object_getClass(self);
+	EBNShadowedClassInfo *info = nil;
+	bool mustSetMethodImplementation = false;
+	
+	@synchronized (EBNBaseClassToShadowInfoTable)
+	{
+		// 1. Is this object already shadowed?
+		info = EBNShadowedClassToInfoTable[curClass];
+
+		if (!info)
+		{
+			// 2. Do we have a shadow class for this base object class already?
+			info = EBNBaseClassToShadowInfoTable[curClass];
+			if (info)
+			{
+				// In this case we have to make the object be the shadow class
+				object_setClass(self, info->_shadowClass);
+			}
+		}
+		
+		if (!info)
+		{
+			// 3. Check to see if the current object's class is a runtime-created subclass of our
+			// runtime-created subclass of the original object class.
+			Class shadowClass = class_getSuperclass(curClass);
+			while (shadowClass && shadowClass != [EBNObservable class])
+			{
+				info = EBNShadowedClassToInfoTable[shadowClass];
+				if (info)
+				{
+					// In this instance curClass isn't the base class--it's somebody else's
+					// private subclass. BUT, our private subclass is a superclass of their
+					// private subclass, so we can cache it as if curClass was our shadow class. Easy, right?
+					[EBNShadowedClassToInfoTable setObject:info forKey:curClass];
+					break;
+				}
+			
+				shadowClass = class_getSuperclass(shadowClass);
+			}
+		}
+	
+		if (!info)
+		{
+			// 4. If this object is subclassed by Apple's KVO, we can't subclass their subclass.
+			// Apple's code becomes unhappy, apparently. So instead we'll method swizzle methods in
+			// Apple's KVO subclass.
+			if ([self class] == class_getSuperclass(curClass))
+			{
+				info = [[EBNShadowedClassInfo alloc] initWithClass:curClass];
+				info->_isAppleKVOClass = true;
+				[EBNShadowedClassToInfoTable setObject:info forKey:curClass];
+			}
+		}
+	
+		if (!info)
+		{
+			// Have to make a new class
+			NSString *shadowClassName = [NSString stringWithFormat:@"%s_EBNShadowClass",
+					class_getName([self class])];
+			Class shadowClass = objc_allocateClassPair([self class], [shadowClassName UTF8String], 0);
+			if (!shadowClass)
+			{
+				// In some odd cases (such as multiple classes with the same name in your codebase) allocate
+				// class pair will fail. In that case try to find the proper shadow class to use.
+			//	shadowClass = objc_getClass([shadowClassName UTF8String]);
+			//	info = EBNShadowedClassToInfoTable[shadowClass];
+			}
+			else
+			{
+				// Override classForCoder to return the parent class; this keeps us from encoding the
+				// shadowed class with NSCoder
+				Method classForCoder = class_getInstanceMethod(curClass, @selector(classForCoder));
+				class_addMethod(shadowClass, @selector(classForCoder), (IMP) EBNShadowed_ClassForCoder,
+						method_getTypeEncoding(classForCoder));
+			
+				// This is where we'd override Class for the shadowed class...
+			
+				// And then we have to register the new class.
+				objc_registerClassPair(shadowClass);
+				
+				// Add our new class to the table
+				info = [[EBNShadowedClassInfo alloc] initWithClass:shadowClass];
+				[EBNBaseClassToShadowInfoTable setObject:info forKey:[self class]];
+				[EBNShadowedClassToInfoTable setObject:info forKey:shadowClass];
+			}
+
+			if (info)
+				object_setClass(self, info->_shadowClass);
+		}
+		
+		// If after all this we don't have an info object, we need to bail as we can't observe this.
+		if (!info)
+			return nil;
+		
+		// Check to see if the getter/setter has been overridden in this class.
+		if (isSetter)
+		{
+			if (![info->_setters containsObject:propertyName])
+			{
+				mustSetMethodImplementation = true;
+				[info->_setters addObject:propertyName];
+			}
+		}
+		else
+		{
+			if (![info->_getters containsObject:propertyName])
+			{
+				mustSetMethodImplementation = true;
+				[info->_getters addObject:propertyName];
+			}
+		}
+	}
+	
+	if (mustSetMethodImplementation)
+		return info->_shadowClass;
 	
 	return nil;
 }
@@ -979,11 +1137,18 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideSetterMethod<>() to create a new method and swizzle it in.
 */
-+ (bool) swizzleImplementationForSetter:(NSString *) propName
+- (bool) swizzleImplementationForSetter:(NSString *) propName
 {
+	// This checks to see if we've made a subclass for observing, and if that subclass has
+	// an override for the setter method for the given property. It returns the class that we need
+	// to modify iff we need to override the setter.
+	Class classToModify = [self prepareToObserveProperty:propName isSetter:YES];
+	if (!classToModify)
+		return true;
+	
 	// The setter doesn't need to be found, although we still return false.
 	// This is what will happen for readonly properties in a keypath.
-	SEL setterSelector = [self selectorForPropertySetter:propName];
+	SEL setterSelector = [[self class] selectorForPropertySetter:propName];
 	if (!setterSelector)
 		return false;
 		
@@ -994,29 +1159,10 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	if (!setterMethod)
 		return false;
 	
-	// Check whether we've already tried to replace this setter method. If we haven't,
-	// we're going to try to now, so mark it as such.
-	if (EBNSwizzledSetterMethodTable.count(setterMethod) == 0)
-	{
-		EBNSwizzledSetterMethodTable[setterMethod] = self;
-	} else
-	{
-		return true;
-	}
-	
-	// Does this actually look like a selector for a setter method?
-	NSString *propertySetterStr = NSStringFromSelector(setterSelector);
-	if (![propertySetterStr hasPrefix:@"set"])
-	{
-		EBLogContext(kLoggingContextOther,
-				@"\"%@\" doesn't look like a property setter method. Make sure it's not a getter method!",
-				propertySetterStr);
-	}
-	
 	// The getter really needs to be found. For keypath properties, we need to use the getter
 	// to figure out what object to move to next; for endpoint properties, we use the getter
 	// to determine if the value actually changes when the setter is called.
-	SEL getterSelector = [self selectorForPropertyGetter:propName];
+	SEL getterSelector = [[self class] selectorForPropertyGetter:propName];
 	EBAssert(getterSelector, @"Couldn't find getter method for property %@ in object %@", propName, self);
 	if (!getterSelector)
 		return false;
@@ -1033,40 +1179,40 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 	switch (typeOfSetter[0])
 	{
 	case _C_CHR:
-		overrideSetterMethod<char>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<char>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_UCHR:
-		overrideSetterMethod<unsigned char>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<unsigned char>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_SHT:
-		overrideSetterMethod<short>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<short>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_USHT:
-		overrideSetterMethod<unsigned short>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<unsigned short>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_INT:
-		overrideSetterMethod<int>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<int>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_UINT:
-		overrideSetterMethod<unsigned int>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<unsigned int>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_LNG:
-		overrideSetterMethod<long>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<long>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_ULNG:
-		overrideSetterMethod<unsigned long>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<unsigned long>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_LNG_LNG:
-		overrideSetterMethod<long long>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<long long>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_ULNG_LNG:
-		overrideSetterMethod<unsigned long long>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<unsigned long long>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_FLT:
-		overrideSetterMethod<float>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<float>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_DBL:
-		overrideSetterMethod<double>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<double>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_BFLD:
 		// Pretty sure this can't happen, as bitfields can't be top-level and are only found inside structs/unions
@@ -1074,34 +1220,34 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 				propName);
 	break;
 	case _C_BOOL:
-		overrideSetterMethod<bool>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<bool>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_PTR:
 	case _C_CHARPTR:
 	case _C_ATOM:		// Apparently never generated? Only docs I can find say treat same as charptr
 	case _C_ARY_B:
-		overrideSetterMethod<void *>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<void *>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	
 	case _C_ID:
-		overrideSetterMethod<id>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<id>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_CLASS:
-		overrideSetterMethod<Class>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<Class>(propName, setterMethod, getterMethod, classToModify);
 	break;
 	case _C_SEL:
-		overrideSetterMethod<SEL>(propName, setterMethod, getterMethod, self);
+		overrideSetterMethod<SEL>(propName, setterMethod, getterMethod, classToModify);
 	break;
 
 	case _C_STRUCT_B:
 		if (!strncmp(typeOfSetter, @encode(NSRange), 32))
-			overrideSetterMethod<NSRange>(propName, setterMethod, getterMethod, self);
+			overrideSetterMethod<NSRange>(propName, setterMethod, getterMethod, classToModify);
 		else if (!strncmp(typeOfSetter, @encode(CGPoint), 32))
-			overrideSetterMethod<CGPoint>(propName, setterMethod, getterMethod, self);
+			overrideSetterMethod<CGPoint>(propName, setterMethod, getterMethod, classToModify);
 		else if (!strncmp(typeOfSetter, @encode(CGRect), 32))
-			overrideSetterMethod<CGRect>(propName, setterMethod, getterMethod, self);
+			overrideSetterMethod<CGRect>(propName, setterMethod, getterMethod, classToModify);
 		else if (!strncmp(typeOfSetter, @encode(CGSize), 32))
-			overrideSetterMethod<CGSize>(propName, setterMethod, getterMethod, self);
+			overrideSetterMethod<CGSize>(propName, setterMethod, getterMethod, classToModify);
 		else
 			EBAssert(false, @"Observable does not have a way to override the setter for %@.",
 					propName);
@@ -1137,6 +1283,15 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 /****************************************************************************************************
 	debugBreakOnChange:
 	
+	Meant to be used with the DebugBreakOnChange() macro. 
+	
+	Will break in the debugger when the property value at the end of the given keypath is changed. 
+	Sort of like a breakpoint on the setter, but only for this object. Sort of like a watchpoint,
+	but without the terrible slowness. 
+	
+	To use, type something like this into lldb:
+	
+		po DebugBreakOnChange(object, @"propertyName")
 */
 - (NSString *) debugBreakOnChange:(NSString *) keyPath line:(int) lineNum file:(const char *) filePath
 		func:(const char *) func
@@ -1179,14 +1334,14 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 - (NSString *) debugShowAllObservers
 {
 	NSMutableString *debugStr = [NSMutableString stringWithFormat:@"\n%@\n", [self debugDescription]];
-	for (NSString *observedMethod in observedMethods)
+	for (NSString *observedMethod in self->_observedMethods)
 	{
 		[debugStr appendFormat:@"    %@ notifies:\n", observedMethod];
-		NSMutableSet *keypathEntries = observedMethods[observedMethod];
+		NSMutableSet *keypathEntries = self->_observedMethods[observedMethod];
 		for (EBNKeypathEntryInfo *entry in keypathEntries)
 		{
-			EBNObservation *blockInfo = entry->blockInfo;
-			id observer = blockInfo->weakObserver;
+			EBNObservation *blockInfo = entry->_blockInfo;
+			id observer = blockInfo->_weakObserver;
 			NSString *blockDebugStr = blockInfo.debugString;
 			if (blockDebugStr)
 			{
@@ -1194,14 +1349,14 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 			} else
 			{
 				[debugStr appendFormat:@"        %p: for <%s: %p> ",
-						entry->blockInfo, class_getName([observer class]), observer];
+						entry->_blockInfo, class_getName([observer class]), observer];
 			}
 			
-			if ([entry->keyPath count] > 1)
+			if ([entry->_keyPath count] > 1)
 			{
 				[debugStr appendFormat:@" path:"];
 				NSString *separator = @"";
-				for (NSString *prop in entry->keyPath)
+				for (NSString *prop in entry->_keyPath)
 				{
 					[debugStr appendFormat:@"%@%@", separator, prop];
 					separator = @".";
@@ -1218,21 +1373,56 @@ static std::map<Method, Class> EBNSwizzledSetterMethodTable;
 /****************************************************************************************************
 	debugDumpAllObservedMethods
 	
-	Dumps the contents of the swizzle table.
+	Dumps the all observed classes and all the methods that are being observed.
 */
 + (NSString *) debugDumpAllObservedMethods
 {
 	NSMutableString *dumpStr = [[NSMutableString alloc] initWithFormat:@"Observed Methods:\n"];
-	for (std::map<Method, Class>::iterator it = EBNSwizzledSetterMethodTable.begin();
-				it != EBNSwizzledSetterMethodTable.end(); ++it)
-	{
-		[dumpStr appendFormat:@"    %s for class:%s\n", sel_getName(method_getName(it->first)), class_getName(it->second)];
-	}
 	
+	for (Class baseClass in EBNBaseClassToShadowInfoTable)
+	{
+		EBNShadowedClassInfo *info = EBNBaseClassToShadowInfoTable[baseClass];
+		[dumpStr appendFormat:@"    For class %@ with shadow class %@\n", baseClass, info->_shadowClass];
+		
+		for (NSString *propertyName in info->_getters)
+		{
+			[dumpStr appendFormat:@"        getter: %@\n", propertyName];
+		}
+		for (NSString *propertyName in info->_setters)
+		{
+			[dumpStr appendFormat:@"        setter: %@\n", propertyName];
+		}
+	}
+
 	return dumpStr;
 }
 
 @end
+
+/****************************************************************************************************
+	EBNShadowed_ClassForCoder
+	
+	Lifted, more or less, from Mike Ash's MAZeroingWeakRef code, this makes classForCoder return
+	the base class instead of our private runtime-created subclass.
+*/
+static Class EBNShadowed_ClassForCoder(id self, SEL _cmd)
+{
+	Class shadowClass = object_getClass(self);
+	@synchronized(EBNBaseClassToShadowInfoTable)
+	{
+		while (shadowClass && shadowClass != [EBNObservable class] && !EBNShadowedClassToInfoTable[shadowClass])
+		{
+			shadowClass = class_getSuperclass(shadowClass);
+		}
+	}
+
+    Class superclass = class_getSuperclass(shadowClass);
+    IMP superClassForCoder = class_getMethodImplementation(superclass, @selector(classForCoder));
+    Class classForCoder = ((id (*)(id, SEL))superClassForCoder)(self, _cmd);
+    if (classForCoder == shadowClass)
+        classForCoder = superclass;
+    return classForCoder;
+}
 
 
 #pragma mark -
@@ -1299,7 +1489,7 @@ template<> struct SetterKeypathUpdate <id>
 			const id previousValue, const id newValue)
 	{
 		NSInteger index = [[observerTable objectForKey:entry] integerValue];
-		if (index != [entry->keyPath count] - 1)
+		if (index != [entry->_keyPath count] - 1)
 		{
 			[previousValue removeKeypath:entry atIndex:index + 1];
 			[newValue createKeypath:entry atIndex:index + 1];
@@ -1347,64 +1537,60 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 	bool doMarkPropertyValid = [classToModify instancesRespondToSelector:@selector(markPropertyValid:)];
 	
 	// This is what gets run when the setter method gets called.
-	void (^setAndObserve)(EBNObservable *_s, T) = ^void (EBNObservable *_s, T newValue)
+	void (^setAndObserve)(EBNObservable *, T) = ^void (EBNObservable *blockSelf, T newValue)
 	{
 		if (doMarkPropertyValid)
-			[_s performSelector:@selector(markPropertyValid:) withObject:propName];
+			[blockSelf performSelector:@selector(markPropertyValid:) withObject:propName];
 				
 		T (*getterImplementation)(id, SEL) = (T (*)(id, SEL)) method_getImplementation(getter);
-		T previousValue = getterImplementation(_s, getterSEL);
-		(originalSetter)(_s, setterSEL, newValue);
+		T previousValue = getterImplementation(blockSelf, getterSEL);
+		(originalSetter)(blockSelf, setterSEL, newValue);
 		
+		// If the value actually changes do all the observation stuff
 		if (!SetterValueCompare<T>::isEqual(previousValue, newValue))
 		{
-			NSMapTable *observerTable = nil;
-			@synchronized(_s)
-			{
-				observerTable = [_s->observedMethods[propName] copy];
-			}
-			
 			bool reapAfterIterating = false;
-		
-			for (EBNKeypathEntryInfo *entry in observerTable)
-			{
-				// Only the object specialization actually implements this
-				// (only objects can have properties, ergo everyone else is a keypath endpoint).
-				SetterKeypathUpdate<T>::updateKeypath(entry, observerTable, previousValue, newValue);
 			
-				EBNObservation *blockInfo = entry->blockInfo;
-				
-				// If this is an immed block, wrap the previous value and call it.
-				// Why not just call [_s valueForKey:]? Immed blocks shouldn't be used much
-				// and we'd have to call valueForKey before setting the new value.
-				if (blockInfo->copiedImmedBlock)
-					[blockInfo executeWithPreviousValue:EBNWrapValue(previousValue)];
-
-				if (blockInfo->copiedBlock)
+			@synchronized(EBNObservableSynchronizationToken)
+			{
+				NSMapTable *observerTable = [blockSelf->_observedMethods[propName] copy];
+				for (EBNKeypathEntryInfo *entry in observerTable)
 				{
-					EBNObservable *strongObserved = blockInfo->weakObserved;
-					if (strongObserved)
+					// Only the object specialization actually implements this
+					// (only objects can have properties, ergo everyone else is a keypath endpoint).
+					SetterKeypathUpdate<T>::updateKeypath(entry, observerTable, previousValue, newValue);
+	
+					// If this is an immed block, wrap the previous value and call it.
+					// Why not just call [blockSelf valueForKey:]? Immed blocks shouldn't be used much
+					// and we'd have to call valueForKey before setting the new value.
+					EBNObservation *blockInfo = entry->_blockInfo;
+					if (blockInfo->_copiedImmedBlock)
+						[blockInfo executeWithPreviousValue:EBNWrapValue(previousValue)];
+		
+					if (blockInfo->_copiedBlock)
 					{
-						@synchronized(EBN_ObserverBlocksToRunAfterThisEvent)
+						EBNObservable *strongObserved = blockInfo->_weakObserved;
+						if (strongObserved)
 						{
 							[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
 							[EBN_ObservedObjectKeepAlive addObject:strongObserved];
 						}
-					} else
-					{
-						reapAfterIterating = true;
+						else
+						{
+							reapAfterIterating = true;
+						}
 					}
 				}
 			}
-			
+
 			if (reapAfterIterating)
-				[_s reapBlocks];
+				[blockSelf reapBlocks];
 		}
 	};
 
 	// Now replace the setter's implementation with the new one
 	IMP swizzledImplementation = imp_implementationWithBlock(setAndObserve);
-	method_setImplementation(setter, swizzledImplementation);
+	class_replaceMethod(classToModify, setterSEL, swizzledImplementation, method_getTypeEncoding(setter));
 }
 
 /****************************************************************************************************
@@ -1423,7 +1609,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	// This sync is important. It makes sure any set that happens in another thread blocks while
 	// the main thread is draining the queue. This in turn means that a setter that gets called
 	// in this block is being set from within an observer block.
-	@synchronized(EBN_ObserverBlocksToRunAfterThisEvent)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
 		// This bit's important too. Each time through this loop we call a bunch of observer blocks.
 		// But, observers could set properties, creating more observation blocks. We should call those

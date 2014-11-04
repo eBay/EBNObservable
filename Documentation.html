@@ -1,6 +1,26 @@
 <!DOCTYPE html>
 	<html>
-	<head>
+	<head><style type="text/css">
+		table {  border: solid black;  border-width: 2px 0px;  empty-cells: hide;  border-spacing: 0px;  padding: 2px;  margin: 20px auto;}
+		table caption {  margin: 5px;  text-align: center;  caption-side: bottom;}
+		thead th {  border: solid gray;  border-width: 0 0 2px 0;  padding: 5px;}
+		thead > tr:last-child > th { border-style: none; }
+		tbody > tr:first-child > td {  border: solid gray;  border-width: 1px 0 0 0;}
+		tbody > tr:first-child > th {  border: solid gray;  border-width: 1px 0 0 0;}
+		thead + tbody > tr:first-child > td {  border: solid black;  border-width: 1px 0 0 0;}
+		thead + tbody > tr:first-child > th {  border: solid black;  border-width: 1px 0 0 0;} 
+		del  {background:#fae6e6;} 
+		ins  {background:#ecfce6} 
+		a.footnote, a.citation {font-size: 0.83em; vertical-align: super;} 
+		body { font-size:24px; background:#FFF; }
+		h1:not(:first-of-type) { page-break-before:always; }
+		h2, h3, h4, h5, h6 {  page-break-after: avoid; }
+		h2+p,h3+p,h4+p,h5+p,h6+p {  page-break-before: avoid; }
+		pre { background:#EEE; }
+		code { font-size:16px; color:#444; } 
+		blockquote { margin-top: 4px; margin-bottom: 4px; }
+		blockquote p { margin: 0px 0px 0px 0px; } </style>
+
 	<title></title>
 	<meta charset="utf-8"/>
 	</head>
@@ -101,6 +121,10 @@
 
 <blockquote>
 <p><a href="#computedproperties">Computed Properties</a></p>
+</blockquote>
+
+<blockquote>
+<p><a href="#customloaders">Custom Loaders</a></p>
 </blockquote>
 
 <blockquote>
@@ -540,9 +564,21 @@ In the debugger, call <code>po [modelObject debugShowAllObservers]</code> to see
 
 <p>Internally, LazyLoader uses Observable to watch the dependent paths; this means that it performs path updating as values in the path change, and that it&#8217;s okay to declare a dependent path before the start point of the path has been assigned a value. Again, LazyLoader currently requires that all dependent paths be rooted at <code>self</code>, although the only reason for this is simplicity.</p>
 
+<h2 id="customloaders">Custom Loaders</h2>
+
+<p>This feature should be considered experimental at this point. The idea is to allow for the creation of a loader block that knows how to compute the value of any property of the object, such as in the case where an object actually stores values in a dictionary, but exposes values via properties. So, instead of writing custom getters for each property that all look the same, you can write one method that takes a property name and sets that property to be lazy loaded with a custom block that knows how to get that property value from the dictionary, and can set it with setValue:forKey:.</p>
+
+<p>However, this makes it completely muddled in the case where you try to use anything from self&#8211;the custom loader block isn&#8217;t local to the object, it&#8217;s invoked for any instance of that class. I&#8217;ll be redoing this code in the near future. </p>
+
+<pre><code class="C">    typedef void (^EBNLazyLoaderBlock)(id blockSelf);
+    - (void) syntheticProperty:(NSString *) property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock;
+</code></pre>
+
 <h2 id="hybridproperties">Hybrid Properties</h2>
 
 <p>Synthetic properties compute their value in their getter method, and therefore usually don&#8217;t have or need a setter method. With LazyLoader however, you can have properties that usually compute their value, but can also have their value overridden via the setter. No extra setup is required for this, just make sure your property is declared <code>readwrite</code>. Calling the setter will set the value as normal, and will mark the property as being valid. The property will keep the set value until the next time it is invalidated.</p>
+
+<p>It is still unwise to call a property&#8217;s setter method from within its getter, as it is likely to lead to infinite recursion.</p>
 
 <h2 id="observingsyntheticproperties">Observing Synthetic Properties</h2>
 

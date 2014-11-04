@@ -1,4 +1,5 @@
 # Table of Contents #
+
 [Why Use Observable][]
 
 [Observable Reference][]
@@ -48,6 +49,8 @@
 [Lazily Loaded Properties][]
 
 >[Computed Properties][]
+
+>[Custom Loaders][]
 
 >[Hybrid Properties][]
 
@@ -465,9 +468,21 @@ You still can manually invalidate a computed property; use this if the property 
 
 Internally, LazyLoader uses Observable to watch the dependent paths; this means that it performs path updating as values in the path change, and that it's okay to declare a dependent path before the start point of the path has been assigned a value. Again, LazyLoader currently requires that all dependent paths be rooted at `self`, although the only reason for this is simplicity.
 
+## Custom Loaders ##
+
+This feature should be considered experimental at this point. The idea is to allow for the creation of a loader block that knows how to compute the value of any property of the object, such as in the case where an object actually stores values in a dictionary, but exposes values via properties. So, instead of writing custom getters for each property that all look the same, you can write one method that takes a property name and sets that property to be lazy loaded with a custom block that knows how to get that property value from the dictionary, and can set it with setValue:forKey:.
+
+However, this makes it completely muddled in the case where you try to use anything from self--the custom loader block isn't local to the object, it's invoked for any instance of that class. I'll be redoing this code in the near future. 
+
+```C
+	typedef void (^EBNLazyLoaderBlock)(id blockSelf);
+	- (void) syntheticProperty:(NSString *) property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock;
+```
 ## Hybrid Properties ##
 
 Synthetic properties compute their value in their getter method, and therefore usually don't have or need a setter method. With LazyLoader however, you can have properties that usually compute their value, but can also have their value overridden via the setter. No extra setup is required for this, just make sure your property is declared `readwrite`. Calling the setter will set the value as normal, and will mark the property as being valid. The property will keep the set value until the next time it is invalidated.
+
+It is still unwise to call a property's setter method from within its getter, as it is likely to lead to infinite recursion.
 
 ## Observing Synthetic Properties ##
 

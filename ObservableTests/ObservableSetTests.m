@@ -71,7 +71,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	[mo1.observableSet addObject:str];
 	
 	// Hash it into a string we can use in keypaths
-    NSString *hash = [mo1.observableSet keyForObject:str];
+    NSString *hash = [EBNObservableSet keyForObject:str];
 	
 	// Get the object back from the hash string
 	id objectFromHash = [mo1.observableSet objectForKey:hash];
@@ -85,7 +85,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	NSString *str = @"aString";
 	[mo1.observableSet addObject:str];
 	
-	NSString *keyPathStr = [NSString stringWithFormat:@"observableSet.%@", [mo1.observableSet keyForObject:str]];
+	NSString *keyPathStr = [NSString stringWithFormat:@"observableSet.%@", [EBNObservableSet keyForObject:str]];
 	
 	[mo1 tell:self when:keyPathStr changes:^(ObservableSetTests *blockSelf, ModelSetObject1 *observed)
 	{

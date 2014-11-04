@@ -18,13 +18,13 @@
 void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info);
 
 
-@interface ModelObject1 : EBNObservable
+@interface DictModelObject1 : EBNObservable
 
 @property (strong) EBNObservableDictionary *dict;
 
 @end
 
-@implementation ModelObject1
+@implementation DictModelObject1
 
 - (instancetype) init
 {
@@ -44,7 +44,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 @implementation ObservableDictionaryTests
 {
-	ModelObject1		*mo1;
+	DictModelObject1		*mo1;
 	int					observerCallCount;
 }
 
@@ -52,7 +52,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 {
     [super setUp];
 
-	mo1 = [[ModelObject1 alloc] init];
+	mo1 = [[DictModelObject1 alloc] init];
 	observerCallCount = 0;
 }
 

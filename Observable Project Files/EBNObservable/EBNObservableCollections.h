@@ -25,7 +25,7 @@
 
 @property (readonly)		NSUInteger count;
 
-- (NSString *) keyForObject:(id) object;
++ (NSString *) keyForObject:(id) object;
 - (id) objectForKey:(NSString *) key;
 
 @end

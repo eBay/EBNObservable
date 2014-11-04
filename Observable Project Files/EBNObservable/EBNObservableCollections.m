@@ -100,7 +100,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
-	NSString *propName = entryInfo->keyPath[index];
+	NSString *propName = entryInfo->_keyPath[index];
 	return [self createKeypath:entryInfo atIndex:index forProperty:propName];
 }
 
@@ -117,11 +117,11 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (bool) removeKeypath:(const EBNKeypathEntryInfo *) removeEntry atIndex:(NSInteger) index
 {
-	if (index >= [removeEntry->keyPath count])
+	if (index >= [removeEntry->_keyPath count])
 		return false;
 
 	bool observerTableRemoved = false;
-	NSString *propName = removeEntry->keyPath[index];
+	NSString *propName = removeEntry->_keyPath[index];
 	
 	// For array collections, we need to handle object-following observations (like "array.4")
 	// in a special way. That special way is to look through every property to find where
@@ -131,7 +131,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	{
 		@synchronized(self)
 		{
-			for (NSString *propertyKey in [observedMethods allKeys])
+			for (NSString *propertyKey in [self->_observedMethods allKeys])
 			{
 				[self removeKeypath:removeEntry atIndex:index forProperty:propertyKey];
 			}
@@ -156,9 +156,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	// Yes, this class is a subclass of NSMutableDictionary that uses internal composition
 	// to implement NSMutableDictionary. See info on class clusters for why.
-	NSMutableDictionary 			*dict;
+	NSMutableDictionary 			*_dict;
 	
-	EBNObservableCollectionProxy	*observationProxy;
+	EBNObservableCollectionProxy	*_observationProxy;
 }
 
 #pragma mark NSDictionary Required Methods
@@ -172,9 +172,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((dict = [[NSMutableDictionary alloc] init]))
+		if ((self->_dict = [[NSMutableDictionary alloc] init]))
 		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
+			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
 		} else
 		{
 			// If dict didn't get initialized, neither did we
@@ -194,9 +194,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
+		if ((self->_dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
 		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
+			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
 		} else
 		{
 			// If dict didn't get initialized, neither did we
@@ -216,9 +216,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
+		if ((self->_dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
 		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
+			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
 		} else
 		{
 			// If dict didn't get initialized, neither did we
@@ -235,7 +235,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (NSUInteger) count
 {
-	return [dict count];
+	return [self->_dict count];
 }
 
 /****************************************************************************************************
@@ -244,7 +244,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (id) objectForKey:(id)aKey
 {
-	return [dict objectForKey:aKey];
+	return [self->_dict objectForKey:aKey];
 }
 
 /****************************************************************************************************
@@ -253,7 +253,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (NSEnumerator *) keyEnumerator
 {
-	return [dict keyEnumerator];
+	return [self->_dict keyEnumerator];
 }
 
 #pragma mark NSDictionary Protocols
@@ -266,7 +266,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->dict];
+	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->_dict];
 	return newDict;
 }
 
@@ -277,7 +277,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (id) mutableCopyWithZone:(NSZone *)zone
 {
-	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->dict];
+	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->_dict];
 	return newDict;
 }
 
@@ -291,7 +291,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 - (id) replacementObjectForCoder:(NSCoder *)aCoder
 {
 	EBNObservableArchiverProxy	*proxy = [[EBNObservableArchiverProxy alloc] init];
-	proxy.dict = self->dict;
+	proxy.dict = self->_dict;
 	
 	return proxy;
 }
@@ -304,7 +304,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
 		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len;
 {
-	return [dict countByEnumeratingWithState:state objects:buffer count:len];
+	return [self->_dict countByEnumeratingWithState:state objects:buffer count:len];
 }
 
 #pragma mark NSMutableDictionary Required Methods
@@ -316,9 +316,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 - (void)setObject:(id)newValue forKey:(id < NSCopying >)aKey
 {
 	// Get the previous value, and then set the new value
-	NSInteger prevCount = [dict count];
-	id previousValue = [dict objectForKey:aKey];
-	[dict setObject:newValue forKey:aKey];
+	NSInteger prevCount = [self->_dict count];
+	id previousValue = [self->_dict objectForKey:aKey];
+	[self->_dict setObject:newValue forKey:aKey];
 	
 	// Keys that aren't strings aren't observable. Slightly unsafe as we have to assume
 	// keyObject is an NSObject subclass.
@@ -329,14 +329,14 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		if ((previousValue == nil) || ![newValue isEqual:previousValue])
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:newValue];
-			[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+			[self->_observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:newValue];
+			[self->_observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[dict count]]];
+	[self->_observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
 /****************************************************************************************************
@@ -346,9 +346,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 - (void) removeObjectForKey:(id)aKey
 {
 	// Get the previous value, and then set the new value
-	NSInteger prevCount = [dict count];
-	id previousValue = [dict objectForKey:aKey];
-	[dict removeObjectForKey:aKey];
+	NSInteger prevCount = [self->_dict count];
+	id previousValue = [self->_dict objectForKey:aKey];
+	[self->_dict removeObjectForKey:aKey];
 	
 	// Keys that aren't strings aren't observable. Slightly unsafe as we have to assume
 	// keyObject is an NSObject subclass.
@@ -359,14 +359,14 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		if (previousValue != nil)
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:nil];
-			[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+			[self->_observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:nil];
+			[self->_observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[dict count]]];
+	[self->_observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
 #pragma mark Keypaths
@@ -388,7 +388,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 */
 - (id) forwardingTargetForSelector:(SEL)aSelector
 {
-	id forwardTarget = EBN_ForwardingTargetGuts(self->observationProxy, aSelector);
+	id forwardTarget = EBN_ForwardingTargetGuts(self->_observationProxy, aSelector);
 	if (!forwardTarget)
 		return [super forwardingTargetForSelector:aSelector];
 	
@@ -568,8 +568,8 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	// If this property was unset before, report as a change to the 'any' property and to the hash
 	if (previousValue == nil)
 	{
-		NSString *keyForPrevValue = [self keyForObject:previousValue];
-		[observationProxy manuallyTriggerObserversForProperty:keyForPrevValue previousValue:previousValue
+		NSString *keyForNewValue = [EBNObservableSet keyForObject:object];
+		[observationProxy manuallyTriggerObserversForProperty:keyForNewValue previousValue:previousValue
 				newValue:object];
 		[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 	}
@@ -592,7 +592,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	
 	if (previousValue)
 	{
-		NSString *keyForPrevValue = [self keyForObject:previousValue];
+		NSString *keyForPrevValue = [EBNObservableSet keyForObject:previousValue];
 		[observationProxy manuallyTriggerObserversForProperty:keyForPrevValue previousValue:previousValue
 				newValue:nil];
 		[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
@@ -615,7 +615,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	referencing that object. Be aware that keypaths containing this construct are not compliant with
 	Apple's KVC!
 */
-- (NSString *) keyForObject:(id) object
++ (NSString *) keyForObject:(id) object
 {
 	NSUInteger hashValue = [object hash];
 	NSString *hashString = [NSString stringWithFormat:@"&%lu", (unsigned long) hashValue];
@@ -665,6 +665,15 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		return [super forwardingTargetForSelector:aSelector];
 	
 	return forwardTarget;
+}
+
+/****************************************************************************************************
+	debugShowAllObservers
+	
+*/
+- (NSString *) debugShowAllObservers
+{
+	return [observationProxy debugShowAllObservers];
 }
 
 @end
@@ -829,7 +838,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	
 	@synchronized(observationProxy)
 	{
-		for (NSString *propertyKey in observationProxy->observedMethods)
+		for (NSString *propertyKey in observationProxy->_observedMethods)
 		{
 			// array.#4 observes the object at index 4, and follows the index
 			if ([propertyKey hasPrefix:@"#"])
@@ -877,9 +886,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] + 1];
-			NSMapTable *observerTable = observationProxy->observedMethods[moveFromPropKey];
-			[observationProxy->observedMethods removeObjectForKey:moveFromPropKey];
-			[observationProxy->observedMethods setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = observationProxy->_observedMethods[moveFromPropKey];
+			[observationProxy->_observedMethods removeObjectForKey:moveFromPropKey];
+			[observationProxy->_observedMethods setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
@@ -905,7 +914,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	
 	@synchronized(observationProxy)
 	{
-		for (NSString *propertyKey in observationProxy->observedMethods)
+		for (NSString *propertyKey in observationProxy->_observedMethods)
 		{
 			if ([propertyKey hasPrefix:@"#"])
 			{
@@ -974,9 +983,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] - 1];
-			NSMapTable *observerTable = observationProxy->observedMethods[moveFromPropKey];
-			[observationProxy->observedMethods removeObjectForKey:moveFromPropKey];
-			[observationProxy->observedMethods setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = observationProxy->_observedMethods[moveFromPropKey];
+			[observationProxy->_observedMethods removeObjectForKey:moveFromPropKey];
+			[observationProxy->_observedMethods setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
@@ -1083,12 +1092,12 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	NSMapTable *observerTable = nil;
 	@synchronized(observationProxy)
 	{
-		observerTable = [observationProxy->observedMethods[propertyName] copy];
+		observerTable = [observationProxy->_observedMethods[propertyName] copy];
 	}
 	
 	for (EBNKeypathEntryInfo *entry in observerTable)
 	{
-		EBNObservable *observedObject = entry->blockInfo->weakObserved;
+		EBNObservable *observedObject = entry->_blockInfo->_weakObserved;
 		if (observedObject)
 		{
 			[observedObject removeKeypath:entry atIndex:0];

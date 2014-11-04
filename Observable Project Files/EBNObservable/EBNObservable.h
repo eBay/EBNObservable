@@ -72,7 +72,6 @@
 	extern "C" {
 #endif
 
-
 @interface EBNObservable : NSObject
 
 - (id) init __attribute__((objc_designated_initializer));
@@ -133,3 +132,4 @@
 #if defined(__cplusplus) || defined(c_plusplus)
 	}
 #endif
+

@@ -169,7 +169,7 @@
 	startTime = CFAbsoluteTimeGetCurrent();
 
 	// Put 10 observerations on the object
-	for (int index = 0; index < 10; ++index)
+	for (int index = 0; index < 100; ++index)
 	{
 		[model4 tell:self when:@"intProperty" changes:^(TestWindowViewController *me, ModelObject1 *obj)
 				{
@@ -194,6 +194,8 @@
 
 - (void) testWithOS_KVO
 {
+	modelObj2.intProperty = 71;
+
 	// Set up our KVO on "intProperty"
 	[modelObj2 tell:self when:@"intProperty" changes:^(id observingObj, id observedObj)
 			{
@@ -205,6 +207,9 @@
 	
 	// Change the property's value
 	modelObj2.intProperty = 72;
+	
+	[modelObj2 removeObserver:self forKeyPath:@"intProperty"];
+	[modelObj2 stopTelling:self aboutChangesTo:@"intProperty"];
 }
 
 - (void) observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change

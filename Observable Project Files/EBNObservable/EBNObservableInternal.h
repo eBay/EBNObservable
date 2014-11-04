@@ -12,6 +12,13 @@
 
 #import "EBNObservable.h"
 
+
+extern NSMutableDictionary		*EBNBaseClassToShadowInfoTable;
+extern NSMutableDictionary		*EBNShadowedClassToInfoTable;
+
+		// Not used for anything other than @synchronize
+extern void						*EBNObservableSynchronizationToken;
+
 // The observedMethod dictionary has a NSMutableSet of these objects attached to each
 // property being observed. This structure describes a single keypath that someone is
 // observing. Each object in the observation path has this object in the dictionary for
@@ -19,9 +26,21 @@
 @interface EBNKeypathEntryInfo : NSObject
 {
 @public
-	NSArray		 			*keyPath;
-	EBNObservation			*blockInfo;
+	NSArray		 			*_keyPath;
+	EBNObservation			*_blockInfo;
 }
+@end
+
+// Observable keeps two static dictionaries that map Class objects to these objects.
+@interface EBNShadowedClassInfo : NSObject
+{
+@public
+	Class					_shadowClass;
+	bool					_isAppleKVOClass;
+	NSMutableSet			*_getters;
+	NSMutableSet 			*_setters;
+}
+- (instancetype) initWithClass:(Class) newShadowClass;
 @end
 
 
@@ -77,12 +96,13 @@
 @public
 	// observedMethods maps properties (specified by the setter method name, as a string) to
 	// a NSMutableSet of blocks to be called when the property changes.
-	NSMutableDictionary *observedMethods;
+	NSMutableDictionary *_observedMethods;
 }
 
 	// Don't call this unless you have a good reason.
-+ (bool) swizzleImplementationForSetter:(NSString *) propName;
+- (bool) swizzleImplementationForSetter:(NSString *) propName;
 + (SEL) selectorForPropertyGetter:(NSString *) propertyName;
+- (Class) prepareToObserveProperty:(NSString *)propertyName isSetter:(bool) isSetter;
 
 @end
 
@@ -97,10 +117,20 @@
 
 // @public doesn't mean public to you--just to EBNObservable.
 @public
-	EBNObservable * __weak 	weakObserved;
-	id __weak 				weakObserver;
-	ObservationBlock 		copiedBlock;
-	ObservationBlockImmed	copiedImmedBlock;
+	EBNObservable * __weak 	_weakObserved;
+	
+		// WeakObserver and its forComparisonOnly doppelganger should hold the same value; we have
+		// both values so that we can compare an observation object's observer against the observer pointer
+		// when the observer object is in the process of getting dealloced (generally, the observer's
+		// dealloc method calls stopTellingAboutChanges: is how this happens). Zeroing weak refs will
+		// return nil when the object pointed to is being deallocated, as they call objc_loadWeak().
+		// The debugger, moreover, will show a non-nil value for the pointer to the being-dealloced object.
+	id __weak 				_weakObserver;
+	id __unsafe_unretained	_weakObserver_forComparisonOnly;
+	
+	
+	ObservationBlock 		_copiedBlock;
+	ObservationBlockImmed	_copiedImmedBlock;
 }
 @end
 

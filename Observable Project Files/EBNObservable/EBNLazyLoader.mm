@@ -13,17 +13,13 @@
 */
 
 #import <CoreGraphics/CoreGraphics.h>
-#include <map>
 
 #import "DebugUtils.h"
 #import "EBNLazyLoader.h"
 #import "EBNObservableInternal.h"
 
-template<typename T> void overrideGetterMethod(NSString *propName, Method getter, Ivar getterIvar);
-
-// Statics
-static std::map<Method, Class> EBNSwizzledGetterMethodTable;
-
+template<typename T> void overrideGetterMethod(NSString *propName, Method getter,
+		Ivar getterIvar, Class classToModify);
 
 // Declares EBNLazyLoader to conform to the EBNPropertyValidityProtocol, privately
 @interface EBNLazyLoader () <EBNPropertyValidityProtocol>
@@ -32,7 +28,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 @implementation EBNLazyLoader
 {
 @public
-	NSMutableSet 	*currentlyValidProperties;
+	NSMutableSet 	*_currentlyValidProperties;
 }
 
 #pragma mark Public API
@@ -49,6 +45,17 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 }
 
 /****************************************************************************************************
+	syntheticProperty:withLazyLoaderBlock:
+	
+	Declares a synthetic property, with no dependents. This property will lazily compute its value;
+	you must use the invalidate methods to clear it.
+*/
+- (void) syntheticProperty:(NSString *)property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock
+{
+	[self wrapPropertyMethods:property customLoader:loaderBlock];
+}
+
+/****************************************************************************************************
 	syntheticProperty:dependsOn:
 	
 	Declares a synthetic property which computes is value from the value of self.keypath.
@@ -59,7 +66,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 */
 - (void) syntheticProperty:(NSString *) property dependsOn:(NSString *) keyPath
 {
-	[self wrapPropertyMethods:property];
+	[self wrapPropertyMethods:property customLoader:nil];
 
 	if (keyPath)
 	{
@@ -83,7 +90,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 */
 - (void) syntheticProperty:(NSString *) property dependsOnPaths:(NSArray *) keyPaths
 {
-	[self wrapPropertyMethods:property];
+	[self wrapPropertyMethods:property customLoader:nil];
 
 	// Set up our observation
 	EBNObservation *blockInfo = NewObservationBlockImmed(self,
@@ -118,7 +125,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	EBAssert([keyPathArray count], @"The SyntheticProperty() macro needs to be called with at least the"
 			@" property you're declaring as synthetic.");
 	NSString *property = [keyPathArray objectAtIndex:0];
-	[self wrapPropertyMethods:property];
+	[self wrapPropertyMethods:property customLoader:nil];
 	[keyPathArray removeObjectAtIndex:0];
 	
 	if ([keyPathArray count])
@@ -128,10 +135,12 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 		{
 			[blockSelf manuallyTriggerObserversForProperty:property previousValue:prevValue];
 		});
-		
+
+#if defined(DEBUG) && DEBUG
 		[blockInfo setDebugString:[NSString stringWithFormat:
 				@"%p: Synthetic property \"%@\" of <%@: %p>",
 				blockInfo, property, [self class], self]];
+#endif
 		[blockInfo observeMultiple:keyPathArray];
 	}
 }
@@ -142,20 +151,58 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	Marks the given property as invalid; this flags it so that it will be recomputed the next time
 	its getter is called. If the property is being observed, it's possible for the getter to be called
 	immediately.
+	
+	This method does NOT check to see if the property parameter is actually a property of the object,
+	and will throw an exception if it isn't. Use invalidatePropertyValues: which does do this check.
 */
 - (void) invalidatePropertyValue:(NSString *) property
 {
 	// Get the current cached value for the property. If the property was invalid, temporarily mark
 	// it valid. This makes the get wrapper return the value from the ivar.
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		[currentlyValidProperties addObject:property];
+		[self->_currentlyValidProperties addObject:property];
 	}
+	
 	id prevValue = [self valueForKeyPath:property];
 
 	// Mark this property invalid, and trigger anyone observing it, telling them that the property
 	// value has changed (to something not yet known).
 	[self manuallyTriggerObserversForProperty:property previousValue:prevValue];
+
+
+}
+
+/****************************************************************************************************
+	invalidatePropertyValues:
+	
+	Marks the given properties as invalid; this flags them so that they will be recomputed the next time
+	its getter is called. If the property is being observed, it's possible for the getter to be called
+	immediately.
+	
+	This method checks the set property values against the set of lazy properties, and only tries to 
+	invalidate properties that are actually lazily loaded.
+*/
+- (void) invalidatePropertyValues:(NSSet *) properties
+{
+	NSMutableSet *lazyProperties = [[NSMutableSet alloc] init];
+	
+	// Get the set of lazy getters from our subclass. If it doesn't exist or is empty we intersect against
+	// the null set and don't invalidate anything, which is what we want if we don't actually have lazy properties.
+	@synchronized (EBNBaseClassToShadowInfoTable)
+	{
+		Class curClass = object_getClass(self);
+		EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[curClass];
+		if (info && info->_getters)
+			[lazyProperties setSet:info->_getters];
+		[lazyProperties intersectSet:properties];
+	}
+	
+	
+	for (NSString *curProperty in lazyProperties)
+	{
+		[self invalidatePropertyValue:curProperty];
+	}
 }
 
 /****************************************************************************************************
@@ -168,9 +215,9 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 {
 	NSArray *validPropertyArray = nil;
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		validPropertyArray =  [self->currentlyValidProperties allObjects];
+		validPropertyArray =  [self->_currentlyValidProperties allObjects];
 	}
 	
 	for (NSString *curProperty in validPropertyArray)
@@ -194,9 +241,9 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	// I'd considered checking to see if the property was already invalid and not triggering observers
 	// in that case, but I don't think that works. If a new observer registered between the first
 	// and second invalidations it wouldn't get called.
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		[currentlyValidProperties removeObject:propertyName];
+		[self->_currentlyValidProperties removeObject:propertyName];
 	}
 	[super manuallyTriggerObserversForProperty:propertyName previousValue:prevValue];
 }
@@ -208,25 +255,24 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	
 	Swaps out the getter and setter for the given property.
 */
-- (bool) wrapPropertyMethods:(NSString *) propName
+- (BOOL) wrapPropertyMethods:(NSString *) propName customLoader:(EBNLazyLoaderBlock) loaderBlock
 {
-	bool propertyIsLazyLoadable = [[self class] swizzleImplementationForGetter:propName];
-	
-	// If lazy loading is going to work, make sure to try wrapping the setter as well, so that
-	// it can mark the property valid when it gets set manually
-	if (propertyIsLazyLoadable)
-	{
-		[[self class] swizzleImplementationForSetter:propName];
+	if (![self swizzleImplementationForGetter:propName customLoader:loaderBlock])
+		return NO;
 
+	[self swizzleImplementationForSetter:propName];
+
+	@synchronized(EBNObservableSynchronizationToken)
+	{
 		// Lazily create our set of currently valid properties. At the start, none of the lazily loaded
 		// properties are going to be valid.
-		if (!self->currentlyValidProperties)
+		if (!self->_currentlyValidProperties)
 		{
-			self->currentlyValidProperties = [[NSMutableSet alloc] init];
+			self->_currentlyValidProperties = [[NSMutableSet alloc] init];
 		}
 	}
 	
-	return propertyIsLazyLoadable;
+	return YES;
 }
 
 /****************************************************************************************************
@@ -240,30 +286,19 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	// This just sanity checks that the property string is actually 1) a property, and 2) set up
 	// to be lazily loaded. As it happens, everything works fine without this check, even if you
 	// do call it with non-properties. Not that you should do that.
+	@synchronized (EBNBaseClassToShadowInfoTable)
 	{
-		// Get the method selector for the getter on this property
-		SEL getterSelector = [[self class] selectorForPropertyGetter:property];
-		if (!getterSelector)
-			return;
-		
-		// Then get the method we'd call for that selector
-		Method getterMethod = class_getInstanceMethod([self class], getterSelector);
-		if (!getterMethod)
-			return;
-		
-		@synchronized([EBNLazyLoader class])
+		EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[object_getClass(self)];
+		if (!info || ![info->_getters containsObject:property])
 		{
-			if (EBNSwizzledGetterMethodTable.count(getterMethod) == 0)
-			{
-				return;
-			}
+			return;
 		}
 	}
 
 	// Mark it valid
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		[self->currentlyValidProperties addObject:property];
+		[self->_currentlyValidProperties addObject:property];
 	}
 }
 
@@ -278,37 +313,26 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideGetterMethod<>() to create a new method and swizzle it in.
 */
-+ (bool) swizzleImplementationForGetter:(NSString *) propertyName
+- (BOOL) swizzleImplementationForGetter:(NSString *) propertyName customLoader:(EBNLazyLoaderBlock) loaderBlock
 {
+	Class classToModify = [self prepareToObserveProperty:propertyName isSetter:NO];
+	if (!classToModify)
+		return YES;
+
 	// Get the method selector for the getter on this property
-	SEL getterSelector = [self selectorForPropertyGetter:propertyName];
+	SEL getterSelector = [[self class] selectorForPropertyGetter:propertyName];
 	EBAssert(getterSelector, @"Couldn't find getter method for property %@ in object %@", propertyName, self);
 	if (!getterSelector)
-		return false;
+		return NO;
 	
 	// Then get the method we'd call for that selector
 	Method getterMethod = class_getInstanceMethod([self class], getterSelector);
 	if (!getterMethod)
-		return false;
+		return NO;
 	
-	// If this method is already in the table, it's swizzled already (or we tried and failed), so just return true.
-	// Otherwise, add the method to the table here.
-	// NOTE to whoever changes this from @synchronized to something faster--move out the return statement!!!
-	@synchronized([EBNLazyLoader class])
-	{
-		if (EBNSwizzledGetterMethodTable.count(getterMethod) == 0)
-		{
-			EBNSwizzledGetterMethodTable[getterMethod] = self;
-		}
-		else
-		{
-			return true;
-		}
-	}
-
 	// Get the instance variable that backs the property
 	Ivar getterIvar = nil;
-	objc_property_t prop = class_getProperty(self, [propertyName UTF8String]);
+	objc_property_t prop = class_getProperty([self class], [propertyName UTF8String]);
 	if (prop)
 	{
 		NSString *propStr = [NSString stringWithUTF8String:property_getAttributes(prop)];
@@ -316,12 +340,12 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 		if (getterIvarRange.location != NSNotFound)
 		{
 			NSString *ivarString = [propStr substringFromIndex:getterIvarRange.location + getterIvarRange.length];
-			getterIvar = class_getInstanceVariable(self, [ivarString UTF8String]);
+			getterIvar = class_getInstanceVariable([self class], [ivarString UTF8String]);
 		}
 	}
 	EBAssert(getterIvar, @"No instance variable found to back property %@.", propertyName);
 	if (!getterIvar)
-		return false;
+		return NO;
 		
 	char typeOfGetter[32];
 	method_getReturnType(getterMethod, typeOfGetter, 32);
@@ -330,90 +354,92 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	switch (typeOfGetter[0])
 	{
 	case _C_CHR:
-		overrideGetterMethod<char>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<char>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_UCHR:
-		overrideGetterMethod<unsigned char>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<unsigned char>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_SHT:
-		overrideGetterMethod<short>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<short>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_USHT:
-		overrideGetterMethod<unsigned short>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<unsigned short>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_INT:
-		overrideGetterMethod<int>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<int>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_UINT:
-		overrideGetterMethod<unsigned int>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<unsigned int>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_LNG:
-		overrideGetterMethod<long>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_ULNG:
-		overrideGetterMethod<unsigned long>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<unsigned long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_LNG_LNG:
-		overrideGetterMethod<long long>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<long long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_ULNG_LNG:
-		overrideGetterMethod<unsigned long long>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<unsigned long long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_FLT:
-		overrideGetterMethod<float>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<float>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_DBL:
-		overrideGetterMethod<double>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<double>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_BFLD:
 		// Pretty sure this can't happen, as bitfields can't be top-level and are only found inside structs/unions
-		EBAssert(false, @"Observable does not have a way to override the setter for %@.", propertyName);
+		EBAssert(NO, @"Observable does not have a way to override the setter for %@.", propertyName);
 	break;
+	
+		// From "Objective-C Runtime Programming Guide: Type Encodings" -- 'B' is "A C++ bool or a C99 _Bool"
 	case _C_BOOL:
-		overrideGetterMethod<bool>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<bool>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_PTR:
 	case _C_CHARPTR:
 	case _C_ATOM:		// Apparently never generated? Only docs I can find say treat same as charptr
 	case _C_ARY_B:
-		overrideGetterMethod<void *>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<void *>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	
 	case _C_ID:
-		overrideGetterMethod<id>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<id>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_CLASS:
-		overrideGetterMethod<Class>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<Class>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 	case _C_SEL:
-		overrideGetterMethod<SEL>(propertyName, getterMethod, getterIvar);
+		overrideGetterMethod<SEL>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 	break;
 
 	case _C_STRUCT_B:
 		if (!strncmp(typeOfGetter, @encode(NSRange), 32))
-			overrideGetterMethod<NSRange>(propertyName, getterMethod, getterIvar);
+			overrideGetterMethod<NSRange>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 		else if (!strncmp(typeOfGetter, @encode(CGPoint), 32))
-			overrideGetterMethod<CGPoint>(propertyName, getterMethod, getterIvar);
+			overrideGetterMethod<CGPoint>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 		else if (!strncmp(typeOfGetter, @encode(CGRect), 32))
-			overrideGetterMethod<CGRect>(propertyName, getterMethod, getterIvar);
+			overrideGetterMethod<CGRect>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 		else if (!strncmp(typeOfGetter, @encode(CGSize), 32))
-			overrideGetterMethod<CGSize>(propertyName, getterMethod, getterIvar);
+			overrideGetterMethod<CGSize>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
 		else
-			EBAssert(false, @"Observable does not have a way to override the setter for %@.", propertyName);
+			EBAssert(NO, @"Observable does not have a way to override the setter for %@.", propertyName);
 	break;
 	
 	case _C_UNION_B:
 		// If you hit this assert, look at what we do above for structs, make something like that for
 		// unions, and add your type to the if statement
-		EBAssert(false, @"Observable does not have a way to override the setter for %@.", propertyName);
+		EBAssert(NO, @"Observable does not have a way to override the setter for %@.", propertyName);
 	break;
 	
 	default:
-		EBAssert(false, @"Observable does not have a way to override the setter for %@.", propertyName);
+		EBAssert(NO, @"Observable does not have a way to override the setter for %@.", propertyName);
 	break;
 	}
 	
-	return true;
+	return YES;
 }
 
 #pragma mark Debug Methods
@@ -432,7 +458,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 */
 - (NSSet *) debug_validProperties
 {
-	return currentlyValidProperties;
+	return self->_currentlyValidProperties;
 }
 
 /****************************************************************************************************
@@ -451,36 +477,14 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 {
 	NSMutableSet *invalidPropertySet = [[NSMutableSet alloc] init];
 	
-	Class curClass = [self class];
-	while (curClass != [EBNLazyLoader class])
+	EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[object_getClass(self)];
+	if (info)
 	{
-		// Get a list of all the properties of this class (does not include superclasses)
-		unsigned int propCount;
-		objc_property_t *properties = class_copyPropertyList(curClass, &propCount);
-		if (properties)
-		{
-			// For each property, check if it's being lazyloaded, and if so add its name to our set.
-			for (int propIndex = 0; propIndex < propCount; ++propIndex)
-			{
-				NSString *propName = @(property_getName(properties[propIndex]));
-				SEL getterSelector = [[self class] selectorForPropertyGetter:propName];
-				Method getterMethod = class_getInstanceMethod([self class], getterSelector);
-
-				if (EBNSwizzledGetterMethodTable.count(getterMethod) > 0)
-				{
-					[invalidPropertySet addObject:propName];
-				}
-			}
-			
-			free(properties);
-		}
-		
-		curClass = [curClass superclass];
+		[invalidPropertySet unionSet:info->_getters];
 	}
 	
 	// Now subtract out all the properties that are currently valid. What's left is the invalid properties.
-	[invalidPropertySet minusSet:currentlyValidProperties];
-	
+	[invalidPropertySet minusSet:self->_currentlyValidProperties];
 	return invalidPropertySet;
 }
 
@@ -498,6 +502,7 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 */
 - (void) debug_ForceAllPropertiesValid
 {
+	// For each invalid property go call valueForKey:, which will force the property to get computed.
 	NSSet *invalidProps = [self debug_invalidProperties];
 	for (NSString *propName in invalidProps)
 	{
@@ -522,30 +527,40 @@ static std::map<Method, Class> EBNSwizzledGetterMethodTable;
 	
 	This is the general case for the template; note the template specializations below.
 */
-template<typename T> void overrideGetterMethod(NSString *propName, Method getter, Ivar getterIvar)
+template<typename T> void overrideGetterMethod(NSString *propName, Method getter,
+		Ivar getterIvar, Class classToModify, EBNLazyLoaderBlock loaderBlock)
 {
 	// All of these local variables get copied into the setAndObserve block
 	T (*originalGetter)(id, SEL) = (T (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	ptrdiff_t ivarOffset = ivar_getOffset(getterIvar);
 	
+	__block BOOL insideLoaderBlock = NO;
+
 	// This is what gets run when the getter method gets called.
-	T (^getLazily)(EBNLazyLoader *_s) = ^ T (EBNLazyLoader *_s)
+	T (^getLazily)(EBNLazyLoader *) = ^ T (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(_s)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
 			// NOTE: Read this fn's comments. This doesn't get called for object properties.
 			// And yes--we need all 3 casts.
-			T *ivarPtr = (T *) (((char *) ((__bridge void *) _s)) + ivarOffset);
-			if ([_s->currentlyValidProperties containsObject:propName])
+			T *ivarPtr = (T *) (((char *) ((__bridge void *) blockSelf)) + ivarOffset);
+			if ([blockSelf->_currentlyValidProperties containsObject:propName])
 			{
 				return *ivarPtr;
 			}
 			else
 			{
-				T value = (originalGetter)(_s, getterSEL);
+				if (loaderBlock && !insideLoaderBlock)
+				{
+					insideLoaderBlock = YES;
+					loaderBlock(blockSelf);
+					insideLoaderBlock = NO;
+				}
+
+				T value = (originalGetter)(blockSelf, getterSEL);
 				*ivarPtr = value;
-				[_s->currentlyValidProperties addObject:propName];
+				[blockSelf->_currentlyValidProperties addObject:propName];
 				return value;
 			}
 		}
@@ -553,7 +568,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 
 	// Now replace the getter's implementation with the new one
 	IMP swizzledImplementation = imp_implementationWithBlock(getLazily);
-	method_setImplementation(getter, swizzledImplementation);
+	class_replaceMethod(classToModify, getterSEL, swizzledImplementation, method_getTypeEncoding(getter));
 }
 
 /****************************************************************************************************
@@ -568,26 +583,36 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	If it isn't valid, we call the original getter method to compute the proper value, and cache that
 	value in the ivar.
 */
-template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar getterIvar)
+template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar getterIvar,
+		Class classToModify, EBNLazyLoaderBlock loaderBlock)
 {
 	// All of these local variables get copied into the setAndObserve block
 	id (*originalGetter)(id, SEL) = (id (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	
+	__block BOOL insideLoaderBlock = NO;
+
 	// This is what gets run when the getter method gets called.
-	id (^getLazily)(EBNLazyLoader *_s) = ^ id (EBNLazyLoader *_s)
+	id (^getLazily)(EBNLazyLoader *) = ^ id (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(_s)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			if ([_s->currentlyValidProperties containsObject:propName])
+			if ([blockSelf->_currentlyValidProperties containsObject:propName])
 			{
-				return object_getIvar(_s, getterIvar);
+				return object_getIvar(blockSelf, getterIvar);
 			}
 			else
 			{
-				id value = (originalGetter)(_s, getterSEL);
-				object_setIvar(_s, getterIvar, value);
-				[_s->currentlyValidProperties addObject:propName];
+				if (loaderBlock && !insideLoaderBlock)
+				{
+					insideLoaderBlock = YES;
+					loaderBlock(blockSelf);
+					insideLoaderBlock = NO;
+				}
+
+				id value = (originalGetter)(blockSelf, getterSEL);
+				object_setIvar(blockSelf, getterIvar, value);
+				[blockSelf->_currentlyValidProperties addObject:propName];
 				return value;
 			}
 		}
@@ -595,7 +620,7 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 
 	// Now replace the getter's implementation with the new one
 	IMP swizzledImplementation = imp_implementationWithBlock(getLazily);
-	method_setImplementation(getter, swizzledImplementation);
+	class_replaceMethod(classToModify, getterSEL, swizzledImplementation, method_getTypeEncoding(getter));
 }
 
 /****************************************************************************************************
@@ -610,26 +635,36 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 	If it isn't valid, we call the original getter method to compute the proper value, and cache that
 	value in the ivar.
 */
-template<> void overrideGetterMethod<Class>(NSString *propName, Method getter, Ivar getterIvar)
+template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
+		Ivar getterIvar, Class classToModify, EBNLazyLoaderBlock loaderBlock)
 {
 	// All of these local variables get copied into the setAndObserve block
 	Class (*originalGetter)(id, SEL) = (Class (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	
+	__block BOOL insideLoaderBlock = NO;
+
 	// This is what gets run when the getter method gets called.
-	Class (^getLazily)(EBNLazyLoader *_s) = ^ Class (EBNLazyLoader *_s)
+	Class (^getLazily)(EBNLazyLoader *) = ^ Class (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(_s)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			if ([_s->currentlyValidProperties containsObject:propName])
+			if ([blockSelf->_currentlyValidProperties containsObject:propName])
 			{
-				return object_getIvar(_s, getterIvar);
+				return object_getIvar(blockSelf, getterIvar);
 			}
 			else
 			{
-				id value = (originalGetter)(_s, getterSEL);
-				object_setIvar(_s, getterIvar, value);
-				[_s->currentlyValidProperties addObject:propName];
+				if (loaderBlock && !insideLoaderBlock)
+				{
+					insideLoaderBlock = YES;
+					loaderBlock(blockSelf);
+					insideLoaderBlock = NO;
+				}
+
+				id value = (originalGetter)(blockSelf, getterSEL);
+				object_setIvar(blockSelf, getterIvar, value);
+				[blockSelf->_currentlyValidProperties addObject:propName];
 				return value;
 			}
 		}
@@ -637,7 +672,7 @@ template<> void overrideGetterMethod<Class>(NSString *propName, Method getter, I
 
 	// Now replace the getter's implementation with the new one
 	IMP swizzledImplementation = imp_implementationWithBlock(getLazily);
-	method_setImplementation(getter, swizzledImplementation);
+	class_replaceMethod(classToModify, getterSEL, swizzledImplementation, method_getTypeEncoding(getter));
 }
 
 

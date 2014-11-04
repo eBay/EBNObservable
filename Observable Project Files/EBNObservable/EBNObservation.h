@@ -87,3 +87,4 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 - (void) setDebugStringWithFn:(const char *) fnName file:(const char *) filePath line:(int) lineNum;
 
 @end
+

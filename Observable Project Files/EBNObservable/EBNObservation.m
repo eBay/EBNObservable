@@ -26,9 +26,10 @@
 {
 	if (self = [super init])
 	{
-		self->weakObserved = observed;
-		self->weakObserver = observer;
-		self->copiedBlock = [callBlock copy];
+		self->_weakObserved = observed;
+		self->_weakObserver = observer;
+		self->_weakObserver_forComparisonOnly = observer;
+		self->_copiedBlock = [callBlock copy];
 	}
 	
 	return self;
@@ -44,9 +45,10 @@
 {
 	if (self = [super init])
 	{
-		self->weakObserved = observed;
-		self->weakObserver = observer;
-		self->copiedImmedBlock = [callBlock copy];
+		self->_weakObserved = observed;
+		self->_weakObserver = observer;
+		self->_weakObserver_forComparisonOnly = observer;
+		self->_copiedImmedBlock = [callBlock copy];
 	}
 	
 	return self;
@@ -62,7 +64,7 @@
 	if (fnName && filePath)
 	{
 		self.debugString = [NSString stringWithFormat:@"%p: for <%s: %p> declared at %s:%d",
-				self, class_getName([self->weakObserver class]), self->weakObserver, basename((char *) filePath), lineNum];
+				self, class_getName([self->_weakObserver class]), self->_weakObserver, basename((char *) filePath), lineNum];
 	}
 
 }
@@ -78,7 +80,7 @@
 		return [NSString stringWithFormat:@"%@", self.debugString];
 	else
 		return [NSString stringWithFormat:@"A block at:%p for <%s: %p ",
-				self, class_getName([self->weakObserver class]), self->weakObserver];
+				self, class_getName([self->_weakObserver class]), self->_weakObserver];
 }
 
 /****************************************************************************************************
@@ -87,8 +89,8 @@
 */
 - (bool) observe:(NSString *) keyPath
 {
-	EBNObservable *observedObj = weakObserved;
-	id strongObserver = weakObserver;
+	EBNObservable *observedObj = self->_weakObserved;
+	id strongObserver = self->_weakObserver;
 	if (observedObj && strongObserver)
 	{
 		return [observedObj observe:keyPath using:self];
@@ -118,7 +120,7 @@
 */
 - (bool) execute
 {
-	EBNObservable *blockSelf = weakObserved;
+	EBNObservable *blockSelf = self->_weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
@@ -126,7 +128,7 @@
 		return false;
 	}
 	
-	id blockObserver = weakObserver;
+	id blockObserver = self->_weakObserver;
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
@@ -134,8 +136,8 @@
 		return false;
 	}
 	
-	if (copiedBlock)
-		copiedBlock(blockObserver, blockSelf);
+	if (self->_copiedBlock)
+		self->_copiedBlock(blockObserver, blockSelf);
 	return true;
 }
 
@@ -146,7 +148,7 @@
 */
 - (bool) executeWithPreviousValue:(id) prevValue
 {
-	EBNObservable *blockSelf = weakObserved;
+	EBNObservable *blockSelf = self->_weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
@@ -154,7 +156,7 @@
 		return false;
 	}
 	
-	id blockObserver = weakObserver;
+	id blockObserver = self->_weakObserver;
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
@@ -162,8 +164,8 @@
 		return false;
 	}
 	
-	if (copiedImmedBlock)
-		copiedImmedBlock(blockObserver, blockSelf, prevValue);
+	if (self->_copiedImmedBlock)
+		self->_copiedImmedBlock(blockObserver, blockSelf, prevValue);
 	return true;
 }
 

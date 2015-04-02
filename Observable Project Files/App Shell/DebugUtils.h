@@ -24,6 +24,9 @@
 	} \
 })
 
+// Again, somewhat chintzy, but you can implement this in your code if you want it.
+#define EBAssertContainerIsSolelyKindOfClass(...)
+
 #define EBLogContext(context, format, ...) NSLog(format, ## __VA_ARGS__)
 
 #define EBLogStdOut(format, ...) printf("%s\n", [[NSString stringWithFormat:format, ## __VA_ARGS__] UTF8String])

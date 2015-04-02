@@ -12,17 +12,28 @@
 
 #import "EBNObservable.h"
 
-
+/**
+	Used to track the shadow classes we create. Shadow classes are private subclasses of observed classes,
+	and we isa swizzle the observed object to make it be one of these private subclasses. This dictionary
+	maps base classes to EBNShadowClassInfo objects.
+ */
 extern NSMutableDictionary		*EBNBaseClassToShadowInfoTable;
-extern NSMutableDictionary		*EBNShadowedClassToInfoTable;
 
-		// Not used for anything other than @synchronize
-extern void						*EBNObservableSynchronizationToken;
+/**
+	Used as a private, global @synchronize token for EBNObservable. Your code should not sync against this.
+	Currently points to EBN_ObserverBlocksToRunAfterThisEvent, but *could* point to any global object.
+*/
+extern NSMutableSet				*EBNObservableSynchronizationToken;
 
-// The observedMethod dictionary has a NSMutableSet of these objects attached to each
-// property being observed. This structure describes a single keypath that someone is
-// observing. Each object in the observation path has this object in the dictionary for
-// the property of that object being observed.
+	// Used to disable this log warning when performance testing
+extern BOOL ebn_WarnOnMultipleObservations;
+
+/**
+	The observedMethod dictionary has a NSMutableSet of these objects attached to each
+	property being observed. This structure describes a single keypath that someone is
+	observing. Each object in the observation path has this object in the dictionary for
+	the property of that object being observed.
+ */
 @interface EBNKeypathEntryInfo : NSObject
 {
 @public
@@ -31,83 +42,87 @@ extern void						*EBNObservableSynchronizationToken;
 }
 @end
 
-// Observable keeps two static dictionaries that map Class objects to these objects.
+/**
+	Observable keeps a static dictionary that maps Class objects to these info objects. There is one of these created
+	for each shadowed class. This object is then responsible for tracking the overridden getters and setters that have
+	been created for this class.
+*/
 @interface EBNShadowedClassInfo : NSObject
 {
 @public
+	Class					_baseClass;
 	Class					_shadowClass;
 	bool					_isAppleKVOClass;
 	NSMutableSet			*_getters;
 	NSMutableSet 			*_setters;
 }
-- (instancetype) initWithClass:(Class) newShadowClass;
+- (instancetype) initWithBaseClass:(Class) baseClass shadowClass:(Class) newShadowClass;
+@end
+
+/**
+	These are runtime-generated methods that we install on shadow classes with class_addMethod().
+	Having these selectors in a protocol makes the compiler happy (well, happier, at lest).
+ */
+@protocol EBNObservable_Custom_Selectors
+
+@optional
+- (void) EBN_original_dealloc;
+- (EBNShadowedClassInfo *) getShadowClassInfo_EBN;
+
 @end
 
 
-@protocol EBNObservableProtocol <NSObject>
+/**
+	This is an category on NSObject whose definition and use are internal to Observable. It simply
+	declares NSObject objects to conform to the EBNObservable_Internal protocol. Since the protocol
+	definition itself is private to Observable, it's still private.
+	
+	These are all methods that the Observable code calls on itself to get things done, but which
+	shouldn't be called from outside Observable. All these methods have the _ebn suffix to 
+	reduce the chance they'll cause method namespace collisions.
+*/
+@interface NSObject (EBNObservable_Internal)
 
-	// These methods add observer blocks to properties of an Observable
-- (EBNObservation *) tell:(id) observer when:(NSString *) propertyName changes:(ObservationBlock) callBlock;
-- (EBNObservation *) tell:(id) observer whenAny:(NSArray *) propertyList changes:(ObservationBlock) callBlock;
+/**
+	This is how Observable gets at the list of methods that are being observed.
+	
+	The returned dictionary is keyed on the properties currently being observed, and each key's value is a set
+	of all the observations active on that property.
 
-	// And these remove the observations
-- (void) stopTellingAboutChanges:(id) observer;
-- (void) stopTelling:(id) observer aboutChangesTo:(NSString *) propertyName;
-- (void) stopTelling:(id) observer aboutChangesToArray:(NSArray *) propertyList;
-- (void) stopAllCallsTo:(ObservationBlock) block;
+	@return A dictionary containing sub-dictionaries for each method which has an active observation.
+ */
+- (NSMutableDictionary *) observedMethodsDict_ebn;
 
-	// Use this in the debugger: "po [<modelObject> debugShowAllObservers]"
-- (NSString *) debugShowAllObservers;
-
-	// Intended to be overridden by subclasses. Lets you know when you are being watched
-- (void) property:(NSString *) propName observationStateIs:(BOOL) isBeingObserved;
-
-	// Returns all properties currently being observed, as an array of strings.
-- (NSArray *) allObservedProperties;
-
-	// Returns how many observers there are for the given property
-- (NSUInteger) numberOfObservers:(NSString *) propertyName;
-
-- (id) valueForKeyEBN:(NSString *) key;
-
-	// For manually triggering observers. EBNObervable subclasses can use this if they
-	// have to set property ivars directly, but still want observers to get called.
-	// The observers still get called at the *end* of the event, not within this call.
-- (void) manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue;
-
-- (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
-- (bool) removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
-- (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+	// When setting up an observation, or when an object in the middle of a keypath changes value, these
+	// methods are used to set up observations on each object in the key path except for the endoint property.
+	// That is, for an observation rooted on object A with the keypath "B.C.D", A will set up its local observation
+	// on property B, and then call createKeypath: on object B. B will then do the same, calling object C.
+- (bool) observe_ebn:(NSString *) keyPathString using:(EBNObservation *) blockInfo;
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
+- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName;
-- (bool) removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName;
 
-	// EBNObservation calls these internally, in its own calls to set up observations.
-- (bool) observe:(NSString *) keyPathString using:(EBNObservation *) blockInfo;
+/**
+	The Execute methods in EBNObservation can cause reaping, so Observable's reapBlocks is exposed 
+	here for Observation's use.
 
-	// The Execute methods in EBNObservation can cause reaping.
-- (int) reapBlocks;
+	@return number of dead observations that got removed.
+ */
+- (int) reapBlocks_ebn;
 
-@end
+	// Don't call these methods unless you have a good reason.
+- (bool) swizzleImplementationForSetter_ebn:(NSString *) propName;
++ (SEL) selectorForPropertyGetter_ebn:(NSString *) propertyName;
+- (Class) prepareToObserveProperty_ebn:(NSString *)propertyName isSetter:(bool) isSetter;
 
-
-@interface EBNObservable () <EBNObservableProtocol>
-{
-@public
-	// observedMethods maps properties (specified by the setter method name, as a string) to
-	// a NSMutableSet of blocks to be called when the property changes.
-	NSMutableDictionary *_observedMethods;
-}
-
-	// Don't call this unless you have a good reason.
-- (bool) swizzleImplementationForSetter:(NSString *) propName;
-+ (SEL) selectorForPropertyGetter:(NSString *) propertyName;
-- (Class) prepareToObserveProperty:(NSString *)propertyName isSetter:(bool) isSetter;
+	// This is an optional method definied by LazyLoader but called by Observable. Downcasting at its finest.
+- (void) markPropertyValid_ebn:(NSString *) property;
 
 @end
 
-@interface EBNObservable (debugging) <EBNObservableProtocol>
-@end
 
 // This describes a single observation block. There is one of these for each observationBlock,
 // and much of the coalescing that takes place is actually unioning sets of these objects.
@@ -117,7 +132,7 @@ extern void						*EBNObservableSynchronizationToken;
 
 // @public doesn't mean public to you--just to EBNObservable.
 @public
-	EBNObservable * __weak 	_weakObserved;
+	NSObject * __weak 		_weakObserved;
 	
 		// WeakObserver and its forComparisonOnly doppelganger should hold the same value; we have
 		// both values so that we can compare an observation object's observer against the observer pointer
@@ -132,16 +147,8 @@ extern void						*EBNObservableSynchronizationToken;
 	ObservationBlock 		_copiedBlock;
 	ObservationBlockImmed	_copiedImmedBlock;
 }
+
 @end
-
-
-	// A private protocol, just for LazyLoader
-@protocol EBNPropertyValidityProtocol <NSObject>
-- (void) markPropertyValid:(NSString *) property;
-@end
-
-
-
 
 /****************************************************************************************************
 	DEBUG_BREAKPOINT

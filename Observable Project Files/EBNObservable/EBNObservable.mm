@@ -9,31 +9,37 @@
 #import "DebugUtils.h"
 #include <sys/sysctl.h>
 #import <objc/runtime.h>
-#import <libgen.h>
-#import <UIKit/UIKit.h>
-#import <CoreGraphics/CoreGraphics.h>
-#include <map>
+#import <UIKit/UIGeometry.h>
+#import <CoreGraphics/CGGeometry.h>
 
 #import "EBNObservableInternal.h"
 
-
+	// When we create a shadowed subclass we'll add these functions as methods of the new subclass
 static Class EBNShadowed_ClassForCoder(id self, SEL _cmd);
-template<typename T> void overrideSetterMethod(NSString *propName, Method setter, Method getter,
-		Class classToModify);
-extern "C" { void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info); }
+static void EBNOverrideDeallocForClass(Class shadowClass);
+static void EBNShadowed_dealloc(NSObject *self, SEL _cmd);
+
+template<typename T> void overrideSetterMethod(NSString *propName, Method setter, Method getter, Class classToModify);
 bool AmIBeingDebugged (void);
+extern "C"
+{
+	void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info);
+}
 
 	// Keeping track of delayed blocks
 static NSMutableSet				*EBN_ObserverBlocksToRunAfterThisEvent;
-static NSMutableSet 			*EBN_ObservedObjectKeepAlive;
+static NSMutableSet				*EBN_ObserverBlocksBeingDrained;
+static NSMutableArray			*EBN_ObservedObjectKeepAlive;
+static NSMutableArray 			*EBN_ObservedObjectBeingDrainedKeepAlive;
 
 	// Shadow classes--private subclasses that we create to implement overriding setter methods
-	// Both of these dictionaries hold EBNShadowedClassInfo objects, and are keyed with Class objects
+	// This dictionary holds EBNShadowedClassInfo objects, and is keyed with Class objects
 NSMutableDictionary				*EBNBaseClassToShadowInfoTable;
-NSMutableDictionary				*EBNShadowedClassToInfoTable;
 
 	// Not used for anything other than as a @synchronize token.
-void							*EBNObservableSynchronizationToken;
+NSMutableSet					*EBNObservableSynchronizationToken;
+
+BOOL ebn_WarnOnMultipleObservations = true;
 
 /***********************************************************************************/
 
@@ -54,10 +60,11 @@ void							*EBNObservableSynchronizationToken;
 #pragma mark -
 @implementation EBNShadowedClassInfo
 
-- (instancetype) initWithClass:(Class) newShadowClass
+- (instancetype) initWithBaseClass:(Class) baseClass shadowClass:(Class) newShadowClass
 {
 	if (self = [super init])
 	{
+		self->_baseClass = baseClass;
 		self->_shadowClass = newShadowClass;
 		self->_getters = [[NSMutableSet alloc] init];
 		self->_setters = [[NSMutableSet alloc] init];
@@ -67,24 +74,45 @@ void							*EBNObservableSynchronizationToken;
 @end
 
 #pragma mark -
+
+/**
+	EBNObservable used to be required base class for any class whose properties were observed. Now
+	that any class can be observed, EBNObservable is still being kept around for continuity. 
+	
+	It does also provide a minor performance boost, as associated objects aren't required, but that's really minor.
+ */
 @implementation EBNObservable
+{
+@public
+	// observedMethods maps properties (specified by the setter method name, as a string) to
+	// a NSMutableSet of blocks to be called when the property changes.
+	NSMutableDictionary *_observedMethods;
+}
+
+/**
+	For subclasses of EBNObservable, this just returns the ivar for the observed methods table.
+	For other classes, this gets the observed methods dict out of an associated object.
+
+	@return Returns the observed methods dictionary.
+ */
+- (NSMutableDictionary *) observedMethodsDict_ebn
+{
+	@synchronized(self)
+	{
+		if (!_observedMethods)
+			_observedMethods = [[NSMutableDictionary alloc] init];
+	}
+
+	return _observedMethods;
+}
+
+@end
+
+
+#pragma mark -
+@implementation NSObject (EBNObservable)
 
 #pragma mark Public API
-
-/****************************************************************************************************
-	init
-	
-	Xcode 5 has the designated initializer annotation, but it doesn't work right for classes that don't
-	declare any initializers? Hmm.
-*/
-- (id) init
-{
-	if (self = [super init])
-	{
-	}
-	
-	return self;
-}
 
 /****************************************************************************************************
 	tell:when:changes:
@@ -97,7 +125,7 @@ void							*EBNObservableSynchronizationToken;
 	EBNObservation *blockInfo = [[EBNObservation alloc] initForObserved:self
 			observer:observer block:callBlock] ;
 	
-	[self observe:keyPathString using:blockInfo];
+	[self observe_ebn:keyPathString using:blockInfo];
 	
 	return blockInfo;
 }
@@ -115,12 +143,14 @@ void							*EBNObservableSynchronizationToken;
 */
 - (EBNObservation *) tell:(id) observer whenAny:(NSArray *) propertyList changes:(ObservationBlock) callBlock
 {
+	EBAssertContainerIsSolelyKindOfClass(propertyList, [NSString class]);
+	
 	EBNObservation *blockInfo = [[EBNObservation alloc] initForObserved:self
 			observer:observer block:callBlock] ;
 
 	for (NSString *keyPathString in propertyList)
 	{
-		[self observe:keyPathString using:blockInfo];
+		[self observe_ebn:keyPathString using:blockInfo];
 	}
 	
 	return blockInfo;
@@ -140,20 +170,26 @@ void							*EBNObservableSynchronizationToken;
 	NSMutableSet *entriesToRemove = [[NSMutableSet alloc] init];
 	
 	// Look for the case where we're removing 'object-following' array elements. This case
-	// doesn't yet work well.
+	// doesn't yet work well. Although we track the original array element that was observed and can find the
+	// observation even if it has changed position in the array, this will match any observation that started
+	// at that index. For example: Repeatedly insert an object into an array at index 0 and then create an observation
+	// on it at "array.0". Array elements 0...n will then all have observations on them, with their original
+	// observation keypath set to "array.0" but their current path equal to their current array position.
+	// Calling this method to stop observing on "array.0" will remove all of those observations.
 	for (NSString *pathEntry in keyPath)
 	{
 		if (isdigit([pathEntry characterAtIndex:0]))
 		{
 			EBLogContext(kLoggingContextOther, @"Ending observation on array elements where the observation is "
-			@"referenced by the keypath doesn't work very well. Perhaps you should use one of the other stopTelling: "@"methods instead.");
+					@"referenced by the keypath doesn't work very well. Perhaps you should use one of the other stopTelling: "
+					@"methods instead.");
 		}
 	}
 	
 	// Find all the entries to be removed
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMapTable *observerTable = self->_observedMethods[propName];
+		NSMapTable *observerTable = self.observedMethodsDict_ebn[propName];
 		for (EBNKeypathEntryInfo *entry in observerTable)
 		{
 			if (entry->_blockInfo->_weakObserver_forComparisonOnly == observer && [keyPath isEqualToArray:entry->_keyPath])
@@ -171,7 +207,7 @@ void							*EBNObservableSynchronizationToken;
 	// And then remove them
 	for (EBNKeypathEntryInfo *entry in entriesToRemove)
 	{
-		[self removeKeypath:entry atIndex:0];
+		[self removeKeypath_ebn:entry atIndex:0];
 	}
 }
 
@@ -200,9 +236,9 @@ void							*EBNObservableSynchronizationToken;
 
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in [self->_observedMethods allKeys])
+		for (NSString *propertyKey in [self.observedMethodsDict_ebn allKeys])
 		{
-			NSMapTable *observerTable = self->_observedMethods[propertyKey];
+			NSMapTable *observerTable = self.observedMethodsDict_ebn[propertyKey];
 			
 			for (EBNKeypathEntryInfo *entryInfo in observerTable)
 			{
@@ -219,7 +255,7 @@ void							*EBNObservableSynchronizationToken;
 
 	for (EBNKeypathEntryInfo *entryInfo in entriesToRemove)
 	{
-		[self removeKeypath:entryInfo atIndex:0];
+		[self removeKeypath_ebn:entryInfo atIndex:0];
 	}
 
 	// Show warnings for odd results
@@ -248,9 +284,9 @@ void							*EBNObservableSynchronizationToken;
 
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in [self->_observedMethods allKeys])
+		for (NSString *propertyKey in [self.observedMethodsDict_ebn allKeys])
 		{
-			NSMapTable *observerTable = self->_observedMethods[propertyKey];
+			NSMapTable *observerTable = self.observedMethodsDict_ebn[propertyKey];
 			
 			for (EBNKeypathEntryInfo *entryInfo in observerTable)
 			{
@@ -267,7 +303,7 @@ void							*EBNObservableSynchronizationToken;
 	
 	for (EBNKeypathEntryInfo *entryInfo in entriesToRemove)
 	{
-		[self removeKeypath:entryInfo atIndex:0];
+		[self removeKeypath_ebn:entryInfo atIndex:0];
 	}
 
 	// Show warnings for odd results
@@ -280,36 +316,25 @@ void							*EBNObservableSynchronizationToken;
 
 }
 
-#pragma mark Protected Stuff for Subclasses
-
 /****************************************************************************************************
-	property:observationStateIs:
+	getProperBaseClass_ebn
+ 
+	Usually, calling [self class] will return the base class, however if Apple's KVO makes a subclass
+	of our runtime subclass, Apple's KVO will override [self class] in their subclass so that it returns
+	the superclass of the class they created, which would be our runtime subclass in this instance.
 	
-	Because Obj-C doesn't have pure virtual methods, and it's easier to just call a method instead
-	of seeing if it exists.
+	See prepareToObserveProperty_ebn:, where this class method gets overridden for Observable shadow classes,
+	and will return the propert base class.
 */
-- (void) property:(NSString *)propName observationStateIs:(BOOL)isBeingObserved
++ (Class) getProperBaseClass_ebn
 {
-	// Do nothing. Subclasses can override this.
+	return self;
 }
 
-/****************************************************************************************************
-	valueForKeyEBN:
-	
-	Cocoa collection classes implement valueForKey: to perform operations on each object in the colleciton.
-	They also don't allow observing for sets and arrays. Since we do, we need a valueForKey: variant
-	that allows you to pass a key string into a collection and get back the corresponding object
-	from the collection. 
-	
-	That is, [observableArray valueForKeyEBN:@"4"] will give you object 4 in the array, just like array[4].
-*/
-- (id) valueForKeyEBN:(NSString *)key
-{
-	return [self valueForKey:key];
-}
+#pragma mark Somewhat Protected
 
 /****************************************************************************************************
-	manuallyTriggerObserversForProperty:previousValue:
+	manuallyTriggerObserversForProperty_ebn:previousValue:
 	
 	Manually adds the observers for the given property to the list of observers to call. Useful
 	if a observed object needs to use direct ivar access yet still wants to trigger observers.
@@ -317,12 +342,12 @@ void							*EBNObservableSynchronizationToken;
 	It's important for this method to not get the new value of the property unless it needs to in
 	order to perform observation path upkeep.
 */
-- (void) manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue
+- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue
 {
 	NSMapTable *observerTable = nil;
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		observerTable = [self->_observedMethods[propertyName] copy];
+		observerTable = [self.observedMethodsDict_ebn[propertyName] copy];
 	}
 	
 	if (!observerTable)
@@ -336,16 +361,16 @@ void							*EBNObservableSynchronizationToken;
 		NSInteger index = [[observerTable objectForKey:entry] integerValue];
 		if (index != [entry->_keyPath count] - 1)
 		{
-			id newValue = [self valueForKeyEBN:propertyName];
+			id newValue = [self valueForKey_ebn:propertyName];
 			if (newValue != prevValue)
 			{
-				[prevValue removeKeypath:entry atIndex:index + 1];
-				[newValue createKeypath:entry atIndex:index + 1];
+				[prevValue removeKeypath_ebn:entry atIndex:index + 1];
+				[newValue createKeypath_ebn:entry atIndex:index + 1];
 			}
 		}
 
 		// Make sure the observed object still exists before calling/scheduling blocks
-		EBNObservable *strongObserved = blockInfo->_weakObserved;
+		NSObject *strongObserved = blockInfo->_weakObserved;
 		if (strongObserved)
 		{
 			// Execute any immediate blocks
@@ -359,24 +384,32 @@ void							*EBNObservableSynchronizationToken;
 			{
 				@synchronized(EBNObservableSynchronizationToken)
 				{
-					[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
-					[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+					if (EBN_ObserverBlocksBeingDrained && [NSThread isMainThread])
+					{
+						[EBN_ObserverBlocksBeingDrained addObject:blockInfo];
+						[EBN_ObservedObjectBeingDrainedKeepAlive addObject:strongObserved];
+					}
+					else
+					{
+						[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
+						[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+					}
 				}
 			}
 		} else
 		{
-			[self reapBlocks];
+			[self reapBlocks_ebn];
 		}
 	}
 }
 
 /****************************************************************************************************
-	manuallyTriggerObserversForProperty:previousValue:newValue:
+	manuallyTriggerObserversForProperty_ebn:previousValue:newValue:
 	
 	Manually adds the observers for the given property to the list of observers to call. Useful
 	if a observed object needs to use direct ivar access yet still wants to trigger observers.
 */
-- (void) manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue
+- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue
 		newValue:(id) newValue
 {
 	if (newValue != prevValue || [propertyName isEqualToString:@"*"])
@@ -384,7 +417,7 @@ void							*EBNObservableSynchronizationToken;
 		NSMapTable *observerTable = nil;
 		@synchronized(EBNObservableSynchronizationToken)
 		{
-			observerTable = [self->_observedMethods[propertyName] copy];
+			observerTable = [self.observedMethodsDict_ebn[propertyName] copy];
 		}
 		
 		if (!observerTable)
@@ -398,12 +431,12 @@ void							*EBNObservableSynchronizationToken;
 			NSInteger index = [[observerTable objectForKey:entry] integerValue];
 			if (index != [entry->_keyPath count] - 1)
 			{
-				[prevValue removeKeypath:entry atIndex:index + 1];
-				[newValue createKeypath:entry atIndex:index + 1];
+				[prevValue removeKeypath_ebn:entry atIndex:index + 1];
+				[newValue createKeypath_ebn:entry atIndex:index + 1];
 			}
 
 			// Make sure the observed object still exists before calling/scheduling blocks
-			EBNObservable *strongObserved = blockInfo->_weakObserved;
+			NSObject *strongObserved = blockInfo->_weakObserved;
 			if (strongObserved)
 			{
 				// Execute any immediate blocks
@@ -417,13 +450,21 @@ void							*EBNObservableSynchronizationToken;
 				{
 					@synchronized(EBNObservableSynchronizationToken)
 					{
-						[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
-						[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+						if (EBN_ObserverBlocksBeingDrained && [NSThread isMainThread])
+						{
+							[EBN_ObserverBlocksBeingDrained addObject:blockInfo];
+							[EBN_ObservedObjectBeingDrainedKeepAlive addObject:strongObserved];
+						}
+						else
+						{
+							[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
+							[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+						}
 					}
 				}
 			} else
 			{
-				[self reapBlocks];
+				[self reapBlocks_ebn];
 			}
 		}
 	}
@@ -438,11 +479,11 @@ void							*EBNObservableSynchronizationToken;
 {
 	// Clean out any observation blocks that are inactive because their observer went away.
 	// We don't want to count them.
-	[self reapBlocks];
+	[self reapBlocks_ebn];
 	
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMutableSet *observerTable = self->_observedMethods[propertyName];
+		NSMutableSet *observerTable = self.observedMethodsDict_ebn[propertyName];
 		NSUInteger numObservers = [observerTable count];
 		return numObservers;
 	}
@@ -457,12 +498,12 @@ void							*EBNObservableSynchronizationToken;
 */
 - (NSArray *) allObservedProperties
 {
-	[self reapBlocks];
+	[self reapBlocks_ebn];
 	
 	NSArray *properties = nil;
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		properties = [self->_observedMethods allKeys];
+		properties = [self.observedMethodsDict_ebn allKeys];
 	}
 	
 	return properties;
@@ -471,105 +512,84 @@ void							*EBNObservableSynchronizationToken;
 #pragma mark Private
 
 /****************************************************************************************************
-	initialize
+	load
 	
 	Because static initialization is so great.
 	
 	Sets up a global set of blocks to be run on the main runloop, and creates a run loop observer
 	to iterate the set.
 */
-+ (void) initialize
++ (void) load
 {
-	// Only set up the global block set and run loop observer once, and do it for the base class.
-	if (self == [EBNObservable class])
-	{
-		// The dispatch_once is probably not necessary, as initialize is guaranteed to be called
-		// exactly once, and the base init is guaranteed to be called before subclass inits
-		// (therefore before subclasses can access the wrapper block queue).
-		static dispatch_once_t once;
-		dispatch_once(&once,
-		^{
-			// Set up our set of blocks to run at the end of each event
-			EBN_ObserverBlocksToRunAfterThisEvent = [[NSMutableSet alloc] init];
-			CFRunLoopObserverRef ref = CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, YES, 0,
-					EBN_RunLoopObserverCallBack, NULL);
-			CFRunLoopAddObserver(CFRunLoopGetMain(), ref, kCFRunLoopDefaultMode);
-			
-			// And, this is our set of objects to keep from getting dealloc'ed until we can
-			// send their observer messages.
-			EBN_ObservedObjectKeepAlive = [[NSMutableSet alloc] init];
+	// The dispatch_once is probably not necessary, as load is guaranteed to be called
+	// exactly once, and the base init is guaranteed to be called before subclass inits
+	// (therefore before subclasses can access the wrapper block queue).
+	static dispatch_once_t once;
+	dispatch_once(&once,
+	^{
+		// Set up our set of blocks to run at the end of each event
+		EBN_ObserverBlocksToRunAfterThisEvent = [[NSMutableSet alloc] init];
+		CFRunLoopObserverRef ref = CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, YES, 0,
+				EBN_RunLoopObserverCallBack, NULL);
+		CFRunLoopAddObserver(CFRunLoopGetMain(), ref, kCFRunLoopDefaultMode);
+		
+		// EBN_ObserverBlocksToRunAfterThisEvent is created at initialization time, is
+		// never dealloc'ed, and is private to EBNObservable. This makes it a good candidate to use
+		// for our @synchronize token.
+		EBNObservableSynchronizationToken = EBN_ObserverBlocksToRunAfterThisEvent;
+		
+		// And, this is our set of objects to keep from getting dealloc'ed until we can
+		// send their observer messages.
+		EBN_ObservedObjectKeepAlive = [[NSMutableArray alloc] init];
 
-			//
-			EBNShadowedClassToInfoTable = [[NSMutableDictionary alloc] init];
-			EBNBaseClassToShadowInfoTable = [[NSMutableDictionary alloc] init];
-		});
+		// This dictionary contains EBNShadowedClassInfo objects, mapping parent classes
+		// (the observed classes) to the objects with info about the shadow class.
+		EBNBaseClassToShadowInfoTable = [[NSMutableDictionary alloc] init];
+	});
+}
+
+/****************************************************************************************************
+	observedMethodsDict_ebn
+	
+	This gets the observed methods dict out of an associated object, creating it if necessary.
+	Note the EBNObservable has its own implementation of this method, which gets the dict out of an ivar.
+*/
+- (NSMutableDictionary *) observedMethodsDict_ebn
+{
+	@synchronized(self)
+	{
+		NSMutableDictionary *observedMethods = objc_getAssociatedObject(self, @selector(observedMethodsDict_ebn));
+		if (!observedMethods)
+		{
+			observedMethods = [[NSMutableDictionary alloc] init];
+			objc_setAssociatedObject(self, @selector(observedMethodsDict_ebn), observedMethods,
+					OBJC_ASSOCIATION_RETAIN);
+		}
+		return observedMethods;
 	}
 }
 
 /****************************************************************************************************
-	dealloc
+	valueForKey_ebn:
 	
-	Cleans up the KVO tables, and calls observedObjectHasBeenDeallocated: on any observers that
-	implement the method.
+	Cocoa collection classes implement valueForKey: to perform operations on each object in the colleciton.
+	They also don't allow observing for sets and arrays. Since we do, we need a valueForKey: variant
+	that allows you to pass a key string into a collection and get back the corresponding object
+	from the collection. 
+	
+	That is, [observableArray valueForKey_ebn:@"4"] will give you object 4 in the array, just like array[4].
 */
-- (void) dealloc
+- (id) valueForKey_ebn:(NSString *)key
 {
-	NSMutableSet *objectsToNotify = [NSMutableSet set];
-	
-	@synchronized(EBNObservableSynchronizationToken)
-	{
-		for (NSMapTable *observerTable in [self->_observedMethods allValues])
-		{
-			for (EBNKeypathEntryInfo *entryInfo in [observerTable copy])
-			{
-				// Remove all 'downstream' keypath parts; they'll become inaccessable after
-				// this object goes away. This case should only really be hit when this object
-				// is weakly held by its 'upstream' object's keypath property.
-				NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
-				[self removeKeypath:entryInfo atIndex:index];
-				
-				if (index == 0)
-				{
-					// Only notify using DeallocProtocol for observations where this object is the base
-					// of the keypath. That is, observer notifications where the notification itself
-					// is going away because this object is the root of the keypath.
-					id object = entryInfo->_blockInfo->_weakObserver;
-					if (object && [object respondsToSelector:@selector(observedObjectHasBeenDealloced:endingObservation:)])
-					{
-						[objectsToNotify addObject:entryInfo];
-					}
-				}
-				
-				// If index != 0, we could trigger observer notifications here, as the 'upstream'
-				// object likely holds us with a __weak or __unsafe_unretained property and won't
-				// notify via normal means when we get dealloced.
-				//
-				// But, this only works for properties that are of type EBNObservable and subclasses.
-				// Other properties of object type (which would have to be endpoint properties)
-				// wouldn't do this.
-			}
-		}
-	}
-	
-	for (EBNKeypathEntryInfo *entry in objectsToNotify)
-	{
-		id observer = entry->_blockInfo->_weakObserver;
-		NSMutableString *keyPathStr = [[NSMutableString alloc] init];
-		NSString *separator = @"";
-		for (NSString *prop in entry->_keyPath)
-		{
-			[keyPathStr appendFormat:@"%@%@", separator, prop];
-			separator = @".";
-		}
-		[observer observedObjectHasBeenDealloced:self endingObservation:keyPathStr];
-	}
+	return [self valueForKey:key];
 }
 
 /****************************************************************************************************
-	observe:using:
+	observe_ebn:using:
+	
 	
 */
-- (bool) observe:(NSString *) keyPathString using:(EBNObservation *) blockInfo
+- (bool) observe_ebn:(NSString *) keyPathString using:(EBNObservation *) blockInfo
 {
 	// Create our keypath entry
 	EBNKeypathEntryInfo	*entryInfo = [[EBNKeypathEntryInfo alloc] init];
@@ -582,14 +602,14 @@ void							*EBNObservableSynchronizationToken;
 				@"Only the final part of a keypath can use the '*' operator.");
 	}
 
-	bool kvoSetUp = [self createKeypath:entryInfo atIndex:0];
+	bool kvoSetUp = [self createKeypath_ebn:entryInfo atIndex:0];
 	EBAssert(kvoSetUp, @"Unable to set up observation on keypath %@", keyPathString);
 	
 	return kvoSetUp;
 }
 
 /****************************************************************************************************
-	createKeypath:atIndex:
+	createKeypath_ebn:atIndex:
 	
 	Keypaths look like "a.b.c.d" where "a" is an EBNObservable object, "b" and "c" are 
 	properties of the object before them (and are also of type EBNObservable), and "d" is a
@@ -597,18 +617,18 @@ void							*EBNObservableSynchronizationToken;
 	
 	The index argument tells this method what part of the keypath it's setting up. This method works
 	by setting up observation on one property of one object, and then if this isn't the end of the 
-	keypath it calls the createKeypath method of the next object in the path, incrementing
+	keypath it calls the createKeypath_ebn method of the next object in the path, incrementing
 	the index argument in the call.
 
 	If the current property value of the non-endpoint property being observed is nil, we stop
 	setting up observation on the keypath. If the property's value changes to non-nil in the 
-	future, createKeypath:atIndex: is called to continue setting up the keypath. Similarly,
+	future, createKeypath_ebn:atIndex: is called to continue setting up the keypath. Similarly,
 	if the property value changes, the 'old' keypath from that point is removed, and a new
 	one is built from the changed property value to the end of the keypath.
 	
 	Returns TRUE if the keypath was set up successfully.
 */
-- (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	// Get the property name we'll be adding observation on
 	NSString *propName = entryInfo->_keyPath[index];
@@ -621,7 +641,7 @@ void							*EBNObservableSynchronizationToken;
 		// The current class must be a subclass of Observable; copyPropertyList only gives us properties
 		// about the current class--not it's superclasses.
 		// So, walk up the class tree, from the current class to Observable.
-		while (curClass != [EBNObservable class])
+		while (curClass && curClass != [NSObject class] && curClass != [EBNObservable class])
 		{
 			unsigned int propCount;
 			objc_property_t *properties = class_copyPropertyList(curClass, &propCount);
@@ -633,7 +653,7 @@ void							*EBNObservableSynchronizationToken;
 					NSString *propString = @(property_getName(properties[propIndex]));
 					if (propString)
 					{
-						[self createKeypath:entryInfo atIndex:index forProperty:propString];
+						[self createKeypath_ebn:entryInfo atIndex:index forProperty:propString];
 					}
 				}
 			
@@ -644,14 +664,14 @@ void							*EBNObservableSynchronizationToken;
 		}
 	} else
 	{
-		return [self createKeypath:entryInfo atIndex:index forProperty:propName];
+		return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
 	}
 	
 	return true;
 }
 
 /****************************************************************************************************
-	createKeypath:atIndex:forProperty:
+	createKeypath_ebn:atIndex:forProperty:
 	
 	Keypaths look like "a.b.c.d" where "a" is an EBNObservable object, "b" and "c" are 
 	properties of the object before them (and are also of type EBNObservable), and "d" is a
@@ -659,18 +679,18 @@ void							*EBNObservableSynchronizationToken;
 	
 	The index argument tells this method what part of the keypath it's setting up. This method works
 	by setting up observation on one property of one object, and then if this isn't the end of the 
-	keypath it calls the createKeypath method of the next object in the path, incrementing
+	keypath it calls the createKeypath_ebn method of the next object in the path, incrementing
 	the index argument in the call.
 
 	If the current property value of the non-endpoint property being observed is nil, we stop
 	setting up observation on the keypath. If the property's value changes to non-nil in the 
-	future, createKeypath:atIndex: is called to continue setting up the keypath. Similarly,
+	future, createKeypath_ebn:atIndex: is called to continue setting up the keypath. Similarly,
 	if the property value changes, the 'old' keypath from that point is removed, and a new
 	one is built from the changed property value to the end of the keypath.
 	
 	Returns TRUE if the keypath was set up successfully.
 */
-- (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName
 {
 	bool success = false;
@@ -678,17 +698,11 @@ void							*EBNObservableSynchronizationToken;
 
 	// Check that this class is set up to observe the given property. That is, check that we've
 	// swizzled the setter.
-	[self swizzleImplementationForSetter:propName];
+	[self swizzleImplementationForSetter_ebn:propName];
 
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		// Make sure we've initialized our observed methods dictionary and properties set
-		if (!self->_observedMethods)
-		{
-			self->_observedMethods = [[NSMutableDictionary alloc] init];
-		}
-	
-		NSMapTable *observerTable = self->_observedMethods[propName];
+		NSMapTable *observerTable = self.observedMethodsDict_ebn[propName];
 
 		// Check for the case where this entryInfo is already in the table. Since
 		// there's one entryInfo for each keypath, this likely indicates a property loop
@@ -698,19 +712,22 @@ void							*EBNObservableSynchronizationToken;
 			EBAssert([keypathIndex integerValue] != index, @"This keypath entry is already being observed? Shouldn't happen.");
 			EBAssert([keypathIndex integerValue] == index, @"This appears to be property loop? Observable can't handle these.");
 		}
-		
-		// Check for the case where the observer is already observing this property
-		id observer = entryInfo->_blockInfo->_weakObserver;
-		if (observer)
+
+		if (ebn_WarnOnMultipleObservations)
 		{
-			for (EBNKeypathEntryInfo *entry in observerTable)
+			// Check for the case where the observer is already observing this property
+			id observer = entryInfo->_blockInfo->_weakObserver;
+			if (observer)
 			{
-				if (entry->_blockInfo->_weakObserver == observer && [entry->_keyPath isEqualToArray:entryInfo->_keyPath])
+				for (EBNKeypathEntryInfo *entry in observerTable)
 				{
-					EBLogContext(kLoggingContextOther,
-							@"%@: While adding a new observer: The observer object (%@) is already "
-							@"observing the property %@. This is sometimes okay, but more often an error.",
-							[self class], [observer debugDescription], propName);
+					if (entry->_blockInfo->_weakObserver == observer && [entry->_keyPath isEqualToArray:entryInfo->_keyPath])
+					{
+						EBLogContext(kLoggingContextOther,
+								@"%@: While adding a new observer: The observer object (%@) is already "
+								@"observing the property %@. This is sometimes okay, but more often an error.",
+								[self class], [observer debugDescription], propName);
+					}
 				}
 			}
 		}
@@ -720,7 +737,7 @@ void							*EBNObservableSynchronizationToken;
 		if (!observerTable)
 		{
 			observerTable = [NSMapTable strongToStrongObjectsMapTable];
-			self->_observedMethods[propName] = observerTable;
+			self.observedMethodsDict_ebn[propName] = observerTable;
 			tableWasEmpty = true;
 		}
 				
@@ -734,12 +751,12 @@ void							*EBNObservableSynchronizationToken;
 	} else
 	{
 		// Not endoint. Move to the next property in the chain, and recurse.
-		id<EBNObservableProtocol> next = (id<EBNObservableProtocol>) [self valueForKeyEBN:propName];
+		NSObject *next = [self valueForKey_ebn:propName];
 		if (next)
 		{
-			EBAssert([next conformsToProtocol:@protocol(EBNObservableProtocol)],
-					@"Every property in a keypath needs to conform to <EBNObservableProtocol>");
-			success = [next createKeypath:entryInfo atIndex:index + 1];
+			EBAssert([next respondsToSelector:@selector(createKeypath_ebn:atIndex:)],
+					@"Every property in a keypath (except the last) needs to respond to createKeypath.");
+			success = [next createKeypath_ebn:entryInfo atIndex:index + 1];
 		} else
 		{
 			// If the property value is nil, we can't recurse any farther, but it also means
@@ -750,17 +767,20 @@ void							*EBNObservableSynchronizationToken;
 		
 	// If the table had been empty, but now isn't, this means the given property
 	// is now being observed (and wasn't before now). Inform ourselves.
-	if (tableWasEmpty)
-		[self property:propName observationStateIs:TRUE];
+	if (tableWasEmpty && [self respondsToSelector:@selector(property:observationStateIs:)])
+	{
+		NSObject <EBNObserverNotificationProtocol> *target = (NSObject<EBNObserverNotificationProtocol> *) self;
+		[target property:propName observationStateIs:TRUE];
+	}
 		
 	return success;
 }
 
 /****************************************************************************************************
-	removeKeypath:atIndex:
+	removeKeypath_ebn:atIndex:
 
 	Removes the observation on the property at the given index into the given keypath entry,
-	(which should map to a property of this object), and then calls removeKeypath:atIndex:
+	(which should map to a property of this object), and then calls removeKeypath_ebn:atIndex:
 	with index + 1 on the next object in the keypath. Stops when we get to the endpoint property.
 	
 	When a property in the middle of an observed keypath changes value, this method gets called
@@ -768,7 +788,7 @@ void							*EBNObservableSynchronizationToken;
 	
 	Returns TRUE if the observation path was removed successfully.
 */
-- (bool) removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	if (index >= [entryInfo->_keyPath count])
 		return false;
@@ -781,26 +801,27 @@ void							*EBNObservableSynchronizationToken;
 		NSArray *properties = nil;
 		@synchronized(EBNObservableSynchronizationToken)
 		{
-			properties = [self->_observedMethods allKeys];
+			properties = [self.observedMethodsDict_ebn allKeys];
 		}
 		
 		for (NSString *property in properties)
 		{
-			[self removeKeypath:entryInfo atIndex:index forProperty:property];
+			[self removeKeypath_ebn:entryInfo atIndex:index forProperty:property];
 		}
-	} else
+	}
+	else
 	{
-		return [self removeKeypath:entryInfo atIndex:index forProperty:propName];
+		return [self removeKeypath_ebn:entryInfo atIndex:index forProperty:propName];
 	}
 	
 	return true;
 }
 
 /****************************************************************************************************
-	removeKeypath:atIndex:forProperty:
+	removeKeypath_ebn:atIndex:forProperty:
 
 	Removes the observation on the property at the given index into the given keypath entry,
-	(which should map to a property of this object), and then calls removeKeypath:atIndex:
+	(which should map to a property of this object), and then calls removeKeypath_ebn:atIndex:
 	with index + 1 on the next object in the keypath. Stops when we get to the endpoint property.
 	
 	When a property in the middle of an observed keypath changes value, this method gets called
@@ -808,7 +829,7 @@ void							*EBNObservableSynchronizationToken;
 	
 	Returns TRUE if the observation path was removed successfully.
 */
-- (bool) removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName
 {
 	bool observerTableRemoved = false;
@@ -816,14 +837,14 @@ void							*EBNObservableSynchronizationToken;
 	// Remove the entry from the observer table for the given property.
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		NSMapTable *observerTable = self->_observedMethods[propName];
+		NSMapTable *observerTable = self.observedMethodsDict_ebn[propName];
 		[observerTable removeObjectForKey:entryInfo];
 		
 		// Could check for duplicate entries and reap zeroed entries here
 		
-		if (![observerTable count])
+		if (observerTable && ![observerTable count])
 		{
-			[self->_observedMethods removeObjectForKey:propName];
+			[self.observedMethodsDict_ebn removeObjectForKey:propName];
 			observerTableRemoved = true;
 		}
 	}
@@ -832,24 +853,25 @@ void							*EBNObservableSynchronizationToken;
 	// next object in the keypath
 	if (index < [entryInfo->_keyPath count] - 1)
 	{
-		EBNObservable *next = [self valueForKeyEBN:propName];
+		NSObject *next = [self valueForKey_ebn:propName];
 		if (next)
 		{
-			[next removeKeypath:entryInfo atIndex:index + 1];
+			[next removeKeypath_ebn:entryInfo atIndex:index + 1];
 		}
 	}
 	
 	// If nobody is observing this property anymore, inform ourselves
-	if (observerTableRemoved)
+	if (observerTableRemoved && [self respondsToSelector:@selector(property:observationStateIs:)])
 	{
-		[self property:propName observationStateIs:false];
+		NSObject <EBNObserverNotificationProtocol> *target = (NSObject<EBNObserverNotificationProtocol> *) self;
+		[target property:propName observationStateIs:TRUE];
 	}
 	
 	return observerTableRemoved;
 }
 
 /****************************************************************************************************
-	reapBlocks
+	reapBlocks_ebn
 
 	Checks every registered block in this object, removing blocks whose observer has been deallocated.
 	This method will tell other Observable objects to remove entries for keypaths where their observing
@@ -861,16 +883,16 @@ void							*EBNObservableSynchronizationToken;
 	
 	Returns the number of blocks that got reaped.
 */
-- (int) reapBlocks
+- (int) reapBlocks_ebn
 {
 	int removedBlockCount = 0;
 	NSMutableSet *entriesToRemove = [[NSMutableSet alloc] init];
 
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in [self->_observedMethods allKeys])
+		for (NSString *propertyKey in [self.observedMethodsDict_ebn allKeys])
 		{
-			NSMapTable *observerTable = self->_observedMethods[propertyKey];
+			NSMapTable *observerTable = self.observedMethodsDict_ebn[propertyKey];
 			for (EBNKeypathEntryInfo *entry in observerTable)
 			{
 				if (!entry->_blockInfo->_weakObserver)
@@ -883,10 +905,10 @@ void							*EBNObservableSynchronizationToken;
 		
 	for (EBNKeypathEntryInfo *entry in entriesToRemove)
 	{
-		EBNObservable *strongObserved = entry->_blockInfo->_weakObserved;
+		NSObject *strongObserved = entry->_blockInfo->_weakObserved;
 		if (strongObserved)
 		{
-			[strongObserved removeKeypath:entry atIndex:0];
+			[strongObserved removeKeypath_ebn:entry atIndex:0];
 			++removedBlockCount;
 		}
 	}
@@ -895,13 +917,13 @@ void							*EBNObservableSynchronizationToken;
 }
 
 /****************************************************************************************************
-	selectorForPropertySetter:
+	selectorForPropertySetter_ebn:
 	
 	Returns the SEL for a given property's setter method, given the name of the property as a string 
 	(NOT the name of the setter method). The SEL will be a valid instance method for this
 	class, or nil.
 */
-+ (SEL) selectorForPropertySetter:(NSString *) propertyName
++ (SEL) selectorForPropertySetter_ebn:(NSString *) propertyName
 {
 	// If this is an actual declared property, get the property, then its property attributes string,
 	// then pull out the setter method from the string.
@@ -938,13 +960,13 @@ void							*EBNObservableSynchronizationToken;
 }
 
 /****************************************************************************************************
-	selectorForPropertyGetter:
+	selectorForPropertyGetter_ebn:
 	
 	Returns the SEL for a given property's getter method, given the name of the property as a string
 	(NOT the name of the setter method). The SEL will be a valid instance method for this
 	class, or nil.
 */
-+ (SEL) selectorForPropertyGetter:(NSString *) propertyName
++ (SEL) selectorForPropertyGetter_ebn:(NSString *) propertyName
 {
 	NSString *getterName = nil;
 	SEL methodSel;
@@ -997,7 +1019,7 @@ void							*EBNObservableSynchronizationToken;
 }
 
 /****************************************************************************************************
-	prepareToObserveProperty
+	prepareToObserveProperty_ebn:isSetter:
 	
 	This returns the class where we should add/replace getter and setter methods in order to 
 	implement observation.
@@ -1005,23 +1027,27 @@ void							*EBNObservableSynchronizationToken;
 	This class should be a runtime-created subclass of the given class. It could be a class created
 	by Apple's KVO, or one created by us.
 */
-- (Class) prepareToObserveProperty:(NSString *)propertyName isSetter:(bool) isSetter
+- (Class) prepareToObserveProperty_ebn:(NSString *)propertyName isSetter:(bool) isSetter
 {
 	//
 	Class curClass = object_getClass(self);
+	Class shadowClass;
 	EBNShadowedClassInfo *info = nil;
-	bool mustSetMethodImplementation = false;
+	BOOL mustSetMethodImplementation = false;
 	
 	@synchronized (EBNBaseClassToShadowInfoTable)
 	{
-		// 1. Is this object already shadowed?
-		info = EBNShadowedClassToInfoTable[curClass];
+			// 1. Is this object already shadowed?
+		if (class_respondsToSelector(curClass, @selector(getShadowClassInfo_EBN)))
+		{
+			info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+		}
 
 		if (!info)
 		{
 			// 2. Do we have a shadow class for this base object class already?
 			info = EBNBaseClassToShadowInfoTable[curClass];
-			if (info)
+			if (info && !info->_isAppleKVOClass)
 			{
 				// In this case we have to make the object be the shadow class
 				object_setClass(self, info->_shadowClass);
@@ -1030,44 +1056,42 @@ void							*EBNObservableSynchronizationToken;
 		
 		if (!info)
 		{
-			// 3. Check to see if the current object's class is a runtime-created subclass of our
-			// runtime-created subclass of the original object class.
-			Class shadowClass = class_getSuperclass(curClass);
-			while (shadowClass && shadowClass != [EBNObservable class])
-			{
-				info = EBNShadowedClassToInfoTable[shadowClass];
-				if (info)
-				{
-					// In this instance curClass isn't the base class--it's somebody else's
-					// private subclass. BUT, our private subclass is a superclass of their
-					// private subclass, so we can cache it as if curClass was our shadow class. Easy, right?
-					[EBNShadowedClassToInfoTable setObject:info forKey:curClass];
-					break;
-				}
-			
-				shadowClass = class_getSuperclass(shadowClass);
-			}
-		}
-	
-		if (!info)
-		{
-			// 4. If this object is subclassed by Apple's KVO, we can't subclass their subclass.
+			// 3. If this object is subclassed by Apple's KVO, we can't subclass their subclass.
 			// Apple's code becomes unhappy, apparently. So instead we'll method swizzle methods in
 			// Apple's KVO subclass.
 			if ([self class] == class_getSuperclass(curClass))
 			{
-				info = [[EBNShadowedClassInfo alloc] initWithClass:curClass];
+				info = [[EBNShadowedClassInfo alloc] initWithBaseClass:[self class] shadowClass:curClass];
 				info->_isAppleKVOClass = true;
-				[EBNShadowedClassToInfoTable setObject:info forKey:curClass];
+				EBNOverrideDeallocForClass(curClass);
+				
+				// This makes the Apple KVO subclass be both the base and the subclass in the table.
+				// Future lookups against this class will get found by step 2, above.
+				[EBNBaseClassToShadowInfoTable setObject:info forKey:curClass];
 			}
 		}
 	
 		if (!info)
 		{
+			// Check if we should make a new class
+				// 1. Do not make shadow classes for CF objects that are toll-free bridged.
+			NSString *className = NSStringFromClass(curClass);
+			if ([className hasPrefix:@"NSCF"] || [className hasPrefix:@"__NSCF"])
+			{
+				// So, you stopped at this assert. Most likely it is because someone set a toll-free bridged
+				// CF object as a NS property value, and someone else observed on it. This doesn't work, and won't work.
+				// You'll just submit a bug report about it, but the level of hacking required to make this work
+				// is incompatible with App Store apps.
+				EBLogContext(kLoggingContextOther, @"Properties of toll-free bridged CoreFoundation objects can't be observed.");
+				EBAssert(true, @"Unable to set up observation on property of object class %@; "
+						@"properties of toll-free bridged CoreFoundation objects can't be observed", className);
+				return nil;
+			}
+		
 			// Have to make a new class
-			NSString *shadowClassName = [NSString stringWithFormat:@"%s_EBNShadowClass",
-					class_getName([self class])];
-			Class shadowClass = objc_allocateClassPair([self class], [shadowClassName UTF8String], 0);
+			static NSString *shadowClassSuffix = @"_EBNShadowClass";
+			NSString *shadowClassName = [NSString stringWithFormat:@"%@%@", className, shadowClassSuffix];
+			shadowClass = objc_allocateClassPair(curClass, [shadowClassName UTF8String], 0);
 			if (!shadowClass)
 			{
 				// In some odd cases (such as multiple classes with the same name in your codebase) allocate
@@ -1077,23 +1101,64 @@ void							*EBNObservableSynchronizationToken;
 			}
 			else
 			{
+				// The new class gets several method overrides.
+				//	1. - class; returns what [self class] returned before swizzling
+				// 	2. - classForCoder; same idea
+				//  3. - dealloc; We override dealloc to clean up observations.
+				//  4. - getShadowClassInfo_EBN; This is a custom method that returns our shadow class info object
+				//  5. + getProperBaseClass_ebn; This is a custom class method that returns the base class
+				//
+				// Note that we don't override respondsToSelector:, meaning that NSObject's resondsToSelector:
+				// will return FALSE for selector getShadowClassInfo_EBN. This is intentional.
+				Class baseClass = [self class];
+				info = [[EBNShadowedClassInfo alloc] initWithBaseClass:baseClass shadowClass:shadowClass];
+				
+				// Override -class (the instance method, not the class method).
+				Class (^overrideTheMethodNamedClass)(NSObject *) = ^Class (NSObject *)
+				{
+					return baseClass;
+				};
+				Method classforClassInstanceMethod = class_getInstanceMethod(curClass, @selector(class));
+				IMP classMethodImplementation = imp_implementationWithBlock(overrideTheMethodNamedClass);
+				class_addMethod(shadowClass, @selector(class), classMethodImplementation,
+						method_getTypeEncoding(classforClassInstanceMethod));
+				
+
 				// Override classForCoder to return the parent class; this keeps us from encoding the
 				// shadowed class with NSCoder
 				Method classForCoder = class_getInstanceMethod(curClass, @selector(classForCoder));
 				class_addMethod(shadowClass, @selector(classForCoder), (IMP) EBNShadowed_ClassForCoder,
 						method_getTypeEncoding(classForCoder));
+				
+				// Override dealloc
+				EBNOverrideDeallocForClass(shadowClass);
+				
+				// Add a custom method that returns our info object
+				EBNShadowedClassInfo *(^customClassInfoMethod)(NSObject *) = ^EBNShadowedClassInfo *(NSObject *)
+				{
+					return info;
+				};
+				IMP infoMethodImplementation = imp_implementationWithBlock(customClassInfoMethod);
+				class_addMethod(shadowClass, @selector(getShadowClassInfo_EBN), infoMethodImplementation, "@@:");
 			
-				// This is where we'd override Class for the shadowed class...
-			
+				// Remember, the base class is not necessarily our direct superclass.
+				Class (^getProperBaseClass_Override)(NSObject *) = ^Class (NSObject *)
+				{
+					return baseClass;
+				};
+				classMethodImplementation = imp_implementationWithBlock(getProperBaseClass_Override);
+				class_addMethod(object_getClass(shadowClass), @selector(getProperBaseClass_ebn),
+						classMethodImplementation, "#@:");
+
 				// And then we have to register the new class.
 				objc_registerClassPair(shadowClass);
 				
-				// Add our new class to the table
-				info = [[EBNShadowedClassInfo alloc] initWithClass:shadowClass];
-				[EBNBaseClassToShadowInfoTable setObject:info forKey:[self class]];
-				[EBNShadowedClassToInfoTable setObject:info forKey:shadowClass];
+				// Add our new class to the table; other objects of the same base class will get isa-swizzled
+				// to this subclass when first observed upon
+				[EBNBaseClassToShadowInfoTable setObject:info forKey:baseClass];
 			}
-
+			
+			// This last bit isa-swizzles self to make it an instance of our shadow class.
 			if (info)
 				object_setClass(self, info->_shadowClass);
 		}
@@ -1128,7 +1193,7 @@ void							*EBNObservableSynchronizationToken;
 }
 
 /****************************************************************************************************
-	swizzleImplementationForSetter:
+	swizzleImplementationForSetter_ebn:
 	
 	Swizzles the implemention of the setter method of the given property. The swizzled implementation
 	calls through to the original implementation and then processes observer blocks.
@@ -1137,38 +1202,38 @@ void							*EBNObservableSynchronizationToken;
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideSetterMethod<>() to create a new method and swizzle it in.
 */
-- (bool) swizzleImplementationForSetter:(NSString *) propName
+- (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
 {
 	// This checks to see if we've made a subclass for observing, and if that subclass has
 	// an override for the setter method for the given property. It returns the class that we need
 	// to modify iff we need to override the setter.
-	Class classToModify = [self prepareToObserveProperty:propName isSetter:YES];
+	Class classToModify = [self prepareToObserveProperty_ebn:propName isSetter:YES];
 	if (!classToModify)
 		return true;
 	
 	// The setter doesn't need to be found, although we still return false.
 	// This is what will happen for readonly properties in a keypath.
-	SEL setterSelector = [[self class] selectorForPropertySetter:propName];
+	SEL setterSelector = [classToModify selectorForPropertySetter_ebn:propName];
 	if (!setterSelector)
 		return false;
 		
 	// For the setter we'll need the method definition, so we can get the argument type
 	// As with the selector, this could be nil (in this case it means that some other class
 	// defines the setter method, but the property is readonly in this class).
-	Method setterMethod = class_getInstanceMethod([self class], setterSelector);
+	Method setterMethod = class_getInstanceMethod(classToModify, setterSelector);
 	if (!setterMethod)
 		return false;
 	
 	// The getter really needs to be found. For keypath properties, we need to use the getter
 	// to figure out what object to move to next; for endpoint properties, we use the getter
 	// to determine if the value actually changes when the setter is called.
-	SEL getterSelector = [[self class] selectorForPropertyGetter:propName];
+	SEL getterSelector = [classToModify selectorForPropertyGetter_ebn:propName];
 	EBAssert(getterSelector, @"Couldn't find getter method for property %@ in object %@", propName, self);
 	if (!getterSelector)
 		return false;
 	
 	// Get the getter method.
-	Method getterMethod = class_getInstanceMethod([self class], getterSelector);
+	Method getterMethod = class_getInstanceMethod(classToModify, getterSelector);
 	EBAssert(getterMethod, @"Could not find getter method. Make sure class %@ has a method named %@.",
 			[self class], NSStringFromSelector(getterSelector));
 		
@@ -1300,7 +1365,7 @@ void							*EBNObservableSynchronizationToken;
 		return @"No debugger detected or not debug build; debugBreakOnChange called but will not fire.";
 		
 	__block EBNObservation *ob = [[EBNObservation alloc] initForObserved:self observer:self immedBlock:
-			^(EBNObservable *blockSelf, EBNObservable *observed, id previousValue)
+			^(NSObject *blockSelf, NSObject *observed, id previousValue)
 			{
 				id newValue = [observed valueForKeyPath:keyPath];
 				if (!(newValue == previousValue) && ![newValue isEqual:previousValue])
@@ -1319,7 +1384,7 @@ void							*EBNObservableSynchronizationToken;
 	if (lineNum > 0)
 		[ob setDebugStringWithFn:func file:filePath line:lineNum];
 	else
-		ob.debugString = @"Set from debugger.";
+		ob.debugString = @"A DebugBreakOnChange: call set using the debugger. Execution will halt when this property changes.";
 	[ob observe:keyPath];
 	
 	return [NSString stringWithFormat:@"Will break in debugger when %@ changes.", keyPath];
@@ -1334,10 +1399,10 @@ void							*EBNObservableSynchronizationToken;
 - (NSString *) debugShowAllObservers
 {
 	NSMutableString *debugStr = [NSMutableString stringWithFormat:@"\n%@\n", [self debugDescription]];
-	for (NSString *observedMethod in self->_observedMethods)
+	for (NSString *observedMethod in self.observedMethodsDict_ebn)
 	{
 		[debugStr appendFormat:@"    %@ notifies:\n", observedMethod];
-		NSMutableSet *keypathEntries = self->_observedMethods[observedMethod];
+		NSMutableSet *keypathEntries = self.observedMethodsDict_ebn[observedMethod];
 		for (EBNKeypathEntryInfo *entry in keypathEntries)
 		{
 			EBNObservation *blockInfo = entry->_blockInfo;
@@ -1407,21 +1472,111 @@ void							*EBNObservableSynchronizationToken;
 */
 static Class EBNShadowed_ClassForCoder(id self, SEL _cmd)
 {
-	Class shadowClass = object_getClass(self);
-	@synchronized(EBNBaseClassToShadowInfoTable)
-	{
-		while (shadowClass && shadowClass != [EBNObservable class] && !EBNShadowedClassToInfoTable[shadowClass])
-		{
-			shadowClass = class_getSuperclass(shadowClass);
-		}
-	}
+	// Get the shadow class that we created, which isn't necessarily the current isa.
+	// (someone else may have come in and made a later runtime subclass of our runtime subclass).
+	EBNShadowedClassInfo *info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+	Class observableShadowClass = info->_shadowClass;
 
-    Class superclass = class_getSuperclass(shadowClass);
+    Class superclass = class_getSuperclass(observableShadowClass);
     IMP superClassForCoder = class_getMethodImplementation(superclass, @selector(classForCoder));
     Class classForCoder = ((id (*)(id, SEL))superClassForCoder)(self, _cmd);
-    if (classForCoder == shadowClass)
+    if (classForCoder == observableShadowClass)
         classForCoder = superclass;
     return classForCoder;
+}
+
+/****************************************************************************************************
+	overrideDeallocForClass_ebn:
+	
+*/
+static void EBNOverrideDeallocForClass(Class shadowClass)
+{
+	// Override dealloc in the shadow class to clean stuff up when the observed object goes away
+	// ARC disallows @selector(dealloc), so we're using an alternate method to get the selector.
+	// From: http://clang.llvm.org/docs/AutomaticReferenceCounting.html
+	// ARC's intent (see their Rationale paragraph) is to prevent messaging dealloc directly,
+	// which we won't be doing.
+	SEL deallocSelector = sel_getUid("dealloc");
+	Method origDealloc = class_getInstanceMethod(shadowClass, deallocSelector);
+	if (!class_addMethod(shadowClass, deallocSelector, (IMP) EBNShadowed_dealloc,
+			method_getTypeEncoding(origDealloc)))
+	{
+		// If there's already a dealloc method in the shadow class, swap it with our
+		// dealloc method so that our dealloc method gets called instead. Our dealloc
+		// method then calls the original dealloc.
+		if (class_addMethod(shadowClass, @selector(EBN_original_dealloc), (IMP) EBNShadowed_dealloc,
+				method_getTypeEncoding(origDealloc)))
+		{
+			Method ebn_dealloc = class_getInstanceMethod(shadowClass, @selector(EBN_original_dealloc));
+			method_exchangeImplementations(origDealloc, ebn_dealloc);
+		}
+	}
+}
+
+/****************************************************************************************************
+	dealloc
+	
+	Cleans up the KVO tables, and calls observedObjectHasBeenDeallocated: on any observers that
+	implement the method.
+*/
+static void EBNShadowed_dealloc(NSObject *self, SEL _cmd)
+{
+	NSMutableSet *objectsToNotify = [NSMutableSet set];
+	
+	@synchronized(EBNObservableSynchronizationToken)
+	{
+		for (NSMapTable *observerTable in [[self observedMethodsDict_ebn] allValues])
+		{
+			for (EBNKeypathEntryInfo *entryInfo in [observerTable copy])
+			{
+				// Remove all 'downstream' keypath parts; they'll become inaccessable after
+				// this object goes away. This case should only really be hit when this object
+				// is weakly held by its 'upstream' object's keypath property.
+				NSInteger index = [[observerTable objectForKey:entryInfo] integerValue];
+				[self removeKeypath_ebn:entryInfo atIndex:index];
+				
+				if (index == 0)
+				{
+					// Only notify using DeallocProtocol for observations where this object is the base
+					// of the keypath. That is, observer notifications where the notification itself
+					// is going away because this object is the root of the keypath.
+					id object = entryInfo->_blockInfo->_weakObserver;
+					if (object && [object respondsToSelector:@selector(observedObjectHasBeenDealloced:endingObservation:)])
+					{
+						[objectsToNotify addObject:entryInfo];
+					}
+				}
+				
+				// If index != 0, we could trigger observer notifications here, as the 'upstream'
+				// object likely holds us with a __weak or __unsafe_unretained property and won't
+				// notify via normal means when we get dealloced.
+				//
+				// But, this only works for properties that are of type EBNObservable and subclasses.
+				// Other properties of object type (which would have to be endpoint properties)
+				// wouldn't do this.
+			}
+		}
+	}
+	
+	for (EBNKeypathEntryInfo *entry in objectsToNotify)
+	{
+		id observer = entry->_blockInfo->_weakObserver;
+		NSMutableString *keyPathStr = [[NSMutableString alloc] init];
+		NSString *separator = @"";
+		for (NSString *prop in entry->_keyPath)
+		{
+			[keyPathStr appendFormat:@"%@%@", separator, prop];
+			separator = @".";
+		}
+		[observer observedObjectHasBeenDealloced:self endingObservation:keyPathStr];
+	}
+	
+	// If we replaced an earlier dealloc selector IN THIS SHADOWED CLASS (can happen if Apple's KVO adds one, or
+	// if a different entity doing runtime isa-swizzling comes in), call through now
+	if (class_respondsToSelector(object_getClass(self), @selector(EBN_original_dealloc)))
+	{
+		[(NSObject<EBNObservable_Custom_Selectors> *) self EBN_original_dealloc];
+	}
 }
 
 
@@ -1481,6 +1636,12 @@ template<typename T> struct SetterKeypathUpdate
 {
 	static inline void updateKeypath(const EBNKeypathEntryInfo * const entry, const NSMapTable * const observerTable,
 			const T previousValue, const T newValue) {}
+	
+		// Also return the observed methods dict for non-object properties, and a copy for object properties
+	static inline NSMapTable *getIteratorTable(const NSObject * const blockSelf, const NSString * const propName)
+	{
+		return blockSelf.observedMethodsDict_ebn[propName];
+	}
 };
 
 template<> struct SetterKeypathUpdate <id>
@@ -1491,10 +1652,15 @@ template<> struct SetterKeypathUpdate <id>
 		NSInteger index = [[observerTable objectForKey:entry] integerValue];
 		if (index != [entry->_keyPath count] - 1)
 		{
-			[previousValue removeKeypath:entry atIndex:index + 1];
-			[newValue createKeypath:entry atIndex:index + 1];
+			[previousValue removeKeypath_ebn:entry atIndex:index + 1];
+			[newValue createKeypath_ebn:entry atIndex:index + 1];
 		}
 
+	}
+	
+	static inline NSMapTable *getIteratorTable(const NSObject * const blockSelf, const NSString * const propName)
+	{
+		return [blockSelf.observedMethodsDict_ebn[propName] copy];
 	}
 };
 
@@ -1534,13 +1700,13 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 	SEL setterSEL = method_getName(setter);
 	SEL getterSEL = method_getName(getter);
 	
-	bool doMarkPropertyValid = [classToModify instancesRespondToSelector:@selector(markPropertyValid:)];
+	bool doMarkPropertyValid = [classToModify instancesRespondToSelector:@selector(markPropertyValid_ebn:)];
 	
 	// This is what gets run when the setter method gets called.
-	void (^setAndObserve)(EBNObservable *, T) = ^void (EBNObservable *blockSelf, T newValue)
+	void (^setAndObserve)(NSObject *, T) = ^void (NSObject *blockSelf, T newValue)
 	{
 		if (doMarkPropertyValid)
-			[blockSelf performSelector:@selector(markPropertyValid:) withObject:propName];
+			[blockSelf performSelector:@selector(markPropertyValid_ebn:) withObject:propName];
 				
 		T (*getterImplementation)(id, SEL) = (T (*)(id, SEL)) method_getImplementation(getter);
 		T previousValue = getterImplementation(blockSelf, getterSEL);
@@ -1550,10 +1716,11 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 		if (!SetterValueCompare<T>::isEqual(previousValue, newValue))
 		{
 			bool reapAfterIterating = false;
+			NSMutableArray *immedBlocksToRun = nil;
 			
 			@synchronized(EBNObservableSynchronizationToken)
 			{
-				NSMapTable *observerTable = [blockSelf->_observedMethods[propName] copy];
+				NSMapTable *observerTable = SetterKeypathUpdate<T>::getIteratorTable(blockSelf, propName);
 				for (EBNKeypathEntryInfo *entry in observerTable)
 				{
 					// Only the object specialization actually implements this
@@ -1565,15 +1732,27 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 					// and we'd have to call valueForKey before setting the new value.
 					EBNObservation *blockInfo = entry->_blockInfo;
 					if (blockInfo->_copiedImmedBlock)
-						[blockInfo executeWithPreviousValue:EBNWrapValue(previousValue)];
-		
+					{
+						if (!immedBlocksToRun)
+							immedBlocksToRun = [[NSMutableArray alloc] init];
+						[immedBlocksToRun addObject:blockInfo];
+					}
+					
 					if (blockInfo->_copiedBlock)
 					{
-						EBNObservable *strongObserved = blockInfo->_weakObserved;
+						NSObject *strongObserved = blockInfo->_weakObserved;
 						if (strongObserved)
 						{
-							[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
-							[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+							if (EBN_ObserverBlocksBeingDrained && [NSThread isMainThread])
+							{
+								[EBN_ObserverBlocksBeingDrained addObject:blockInfo];
+								[EBN_ObservedObjectBeingDrainedKeepAlive addObject:strongObserved];
+							}
+							else
+							{
+								[EBN_ObserverBlocksToRunAfterThisEvent addObject:blockInfo];
+								[EBN_ObservedObjectKeepAlive addObject:strongObserved];
+							}
 						}
 						else
 						{
@@ -1582,9 +1761,19 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 					}
 				}
 			}
+			
+			// If there are immediate blocks to run, execute them now.
+			if (immedBlocksToRun)
+			{
+				id wrappedPreviousValue = EBNWrapValue(previousValue);
+				for (EBNObservation *observation in immedBlocksToRun)
+				{
+					[observation executeWithPreviousValue:wrappedPreviousValue];
+				}
+			}
 
 			if (reapAfterIterating)
-				[blockSelf reapBlocks];
+				[blockSelf reapBlocks_ebn];
 		}
 	};
 
@@ -1603,41 +1792,49 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 */
 void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info)
 {
-	if (![EBN_ObserverBlocksToRunAfterThisEvent count])
-		return;
-		
-	// This sync is important. It makes sure any set that happens in another thread blocks while
-	// the main thread is draining the queue. This in turn means that a setter that gets called
-	// in this block is being set from within an observer block.
+	// Make a copy the list of blocks we need to call. This copy goes into a global that is only
+	// mutated by the main thread. So, after this sync, all other threads that mutate observed
+	// properties are adding blocks to EBN_ObserverBlocksToRunAfterThisEvent, which will schedule
+	// the block for the next time this method is called. Blocks scheduled by the main thread (which
+	// functionally means blocks scheduled due to code in other blocks) will be added to the BeingDrained set.
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		// This bit's important too. Each time through this loop we call a bunch of observer blocks.
-		// But, observers could set properties, creating more observation blocks. We should call those
-		// observers too, unless it will cause recursion. The idea is the masterCallList tracks
-		// every block we've called during this event, and we only call any particular block once.
-		NSMutableSet *masterCallList = [NSMutableSet set];
-		
-		while ([EBN_ObserverBlocksToRunAfterThisEvent count])
-		{
-			// Step 1: Copy the list of objects that have blocks that need to be called
-			NSMutableSet *thisIterationCallList = [EBN_ObserverBlocksToRunAfterThisEvent copy];
-			
-			// Step 2: Call each observation block
-			for (EBNObservation *blockInfo in thisIterationCallList)
-			{
-				[blockInfo execute];
-			}
+		if (![EBN_ObserverBlocksToRunAfterThisEvent count])
+			return;
 
-			// Step 3: Add the blocks we just called to the master list
-			[masterCallList unionSet:thisIterationCallList];
-			
-			// Step 4: Remove any blocks we've already called from the global set
-			[EBN_ObserverBlocksToRunAfterThisEvent minusSet:masterCallList];
-		}
-		
-		// We're done notifying observers, purge the retains we've been keeping
-		[EBN_ObservedObjectKeepAlive removeAllObjects];
+		EBN_ObserverBlocksBeingDrained = [EBN_ObserverBlocksToRunAfterThisEvent mutableCopy];
+		[EBN_ObserverBlocksToRunAfterThisEvent removeAllObjects];
+		EBN_ObservedObjectBeingDrainedKeepAlive = EBN_ObservedObjectKeepAlive;
+		EBN_ObservedObjectKeepAlive = [[NSMutableArray alloc] init];
 	}
+	
+	// Observers could set properties, creating more observation blocks. We should call those
+	// observers too, unless it will cause recursion. The idea is the masterCallList tracks
+	// every block we've called during this event, and we only call any particular block once.
+	NSMutableSet *masterCallList = [NSMutableSet set];
+	
+	while (EBN_ObserverBlocksBeingDrained)
+	{
+		// Step 1: Copy the list of objects that have blocks that need to be called
+		NSMutableSet *thisIterationCallList = [EBN_ObserverBlocksBeingDrained mutableCopy];
+		
+		// Step 2: Add the blocks we're going go call to the master list
+		[masterCallList unionSet:thisIterationCallList];
+
+		// Step 3: Call each observation block
+		for (EBNObservation *blockInfo in thisIterationCallList)
+		{
+			[blockInfo execute];
+		}
+
+		// Step 4: Remove any blocks we've already called from the global set
+		[EBN_ObserverBlocksBeingDrained minusSet:masterCallList];
+		if (![EBN_ObserverBlocksBeingDrained count])
+			EBN_ObserverBlocksBeingDrained = nil;
+	}
+	
+	// We're done notifying observers, purge the retains we've been keeping
+	EBN_ObservedObjectBeingDrainedKeepAlive = nil;
 }
 
 /****************************************************************************************************

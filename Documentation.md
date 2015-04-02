@@ -8,8 +8,6 @@
 
 >[Observable Objects][]
 
->[Creating Observable Subclasses][]
-
 >[Key Paths][]
 
 >[The Act of Observing][]
@@ -17,6 +15,8 @@
 >[Beginning Observation][]
 
 >[Ending Observation][]
+
+>[Observation Blocks][observationblocks]
 
 >[When Observation Blocks Get Called][]
 
@@ -27,6 +27,8 @@
 >[Observing the Observers][]
 
 >[Dealloc Protocol][]
+
+>[Manually Triggering Observers][manuallytriggeringobservers]
 
 >[Debugging][]
 
@@ -46,7 +48,9 @@
 
 >[Minutiae][]
 
-[Lazily Loaded Properties][]
+[LazyLoader Reference][lazyloaderreference]
+
+>[Lazily Loaded Properties][lazilyloadedproperties]
 
 >[Computed Properties][]
 
@@ -93,41 +97,41 @@ Plus, Observable has a subclass called LazyLoader, which makes it easy for you t
 This documentation refers to Observable as the SDK package, although the core class is EBNObservable, and all of its classes are prefixed EBN. This is because this code is plucked straight from the eBay for iPhone app, and the team has coding standards. Observable and EBNObservable are more or less interchangeable terms.
 
 ## Observable Objects ##
-Bad news up front: unlike Apple's KVO implementation, only subclasses of Observable may be observed. This is by design, as it met the needs our our project. Making your model layer class a subclass of Observable creates a promise to the rest of the application that all of your publicly visible properties are KVC compliant, which mostly means that they use their property setter methods consistently.
+Observable was initially written so that only subclasses of the EBNObservable class could be observed. That has since changed, and now any object can be observed; the EBNObservable class is still in the package for compatibility with older code.
 
-The project for which Observable was originally created has a pretty good size codebase, and we didn't feel like going through all of it to ensure everyone was using their proper setters correctly.
+Generally speaking, an object that can be observed is an NSObject subclass that has properties. It is possible to observe readonly properties of objects, although doing so won't generate automatic observer notifications, unless the object privately has a readwrite version of the property or implements a private custom setter. 
 
-The good news is that making Observable into a category on NSObject should be pretty straightforward. There is some information on what would be required to implement this in the Future Work section.
+Collection classes such as NSSet, NSDictionary, and NSArray and their mutable subclasses are observable objects, in that they have properties such as a `count` property and those properties can be observed, but much more often you want to observe an item in a collection class, which doesn't work for the Foundation collection classes. Using a dictionary key as a key path of an NSDictionary object doesn't work because the dictionary key is not a @property. But, see the section on Observable Collections, a set of collection subclasses that do support this.
 
-## Creating Observable Subclasses ##
-The only rules for subclasses of Observable are that implementors need to always use property setter semantics when setting properties. You can use "object.property = x" notation or [object setProperty:x] notation. Using object->_property = x will change the property value without notifying observers, which is usually bad.
+Just like with Apple's KVO, for automatic observation of property changes to work properly the implementor of a class needs to always use property setter semantics when setting properties. You can use "object.property = x" notation or [object setProperty:x] notation. Using object->_property = x will change the property value without notifying observers, which is usually bad form, but be sure to follow the rules about using that form in init, dealloc, and within the setter method itself.
 
-Internally, Observable will method swizzle your setter methods with KVO wrapper methods as necessary. This is a second fundamental difference between Observable and Apple's KVO. Apple's KVO uses isa-swizzling, creating hidden subclasses on the fly and making observed objects become instances of their subclass.
+Internally, when Observable begins observing a property for changes it creates a runtime subclass of the observed object's class, adds a custom setter method to that subclass that calls through to the original setter and also handles notifying observers, and changes the class of the observed object to be the runtime-created subclass. This is very similar to what Apple's KVO does to implement automatic change notification.
 ## Key Paths ##
 A key path is a string of property names separated by periods. Key paths are always relative paths, rooted from the observed object. For example, for a singleton `UserCache` object that has a `currentUser` property (of type `User`) which in turn had an `Address` property, you might have a key path rooted at the singleton that looked like this:
 
 ```C
-	@interface UserCache : EBNObservable
+	@interface UserCache : NSObject
 	@property User currentUser;
 	@end
  
-	@interface User : EBNObservable
+	@interface User : NSObject
 	@property StreetAddress address;
 	@end
  
-	@interface StreetAddress : EBNObservable
+	@interface StreetAddress : NSObject
 	@property NSString *zipCode;
 	@end
 
 	NSString *keyPath = @"currentUser.Address.zipCode";
 ```
-This is all very much like Apple's KFO, except for this key path to work, `UserCache`, `User`, and `Address` all need to be subclasses of EBNObservable. Each component of the key path must be an actual property of the preceding object.
+This is all very much like Apple's KVO. Each component of the key path must be an actual property of the preceding object. Because of this design, only the last property in a key path can be of non-object type. 
 
-There are a few special key path elements. The `*` element means, "every property of this object". It can only be the final element in a path, as a hedge against insanity. 
-When we get to talking about observing collection objects, there's some special element notations for sets and arrays. We'll get to those later.
+There are a few special key path elements. The `*` element means, "every property of this object". It can only be the final element in a path, as a hedge against insanity. There's no technical reason we couldn't make a key path of `"*.*.*.*.*"` work, but it could generate thousands of individual observations when used for a complicated object graph and since Observable doesn't tell what it was that changed, it quickly degenerates into uselessness. Also, when we get to talking about observing collection objects, there's some special element notations for sets and arrays. We'll get to those later.
 
 ## The Act of Observing
-When you start observing a key path, Observable watches for changes to each property in the key path. When a property in the middle of an observed key path changes value (that is, that property's setter method gets called) Observable will stop observing the old value's object and start observing the new value. In the `User` example above, if the key path "currentUser.Address.zipCode" was being observed and the currentUser's `Address` object was replaced with a new `StreetAddress` object, the observation will update automatically to observe the new `StreetAddress` object–and also the new `zipCode` property of the new `StreetAddress`.
+When you start observing a key path, Observable watches for changes to each property in the key path. When a property in the middle of an observed key path changes value (that is, that property's setter method gets called) Observable will stop observing the old value's object and start observing the new value. Importantly, this mechanism works if the old or new value for a property in the middle of a key path is nil. An important pattern to understand is that you can set up an observation in your object's init method, observing a property of some object and also requesting the data for that property be fetched asynchronously (network or file load, asynchronous image operation, whatever). When the fetch completes the property value goes from nil to non-nil, and your observer gets called. If the object changes again later (or a value in the observed key path changes), you'll get notified again. In this way your code that responds to the initial fetch completion is the same code that responds to changes. 
+
+In the `User` example above, if the key path "currentUser.Address.zipCode" was being observed and the currentUser's `Address` object was replaced with a new `StreetAddress` object, the observation will update automatically to observe the new `StreetAddress` object–and also the new `zipCode` property of the new `StreetAddress`.
 
 In code:
 
@@ -157,6 +161,8 @@ The `ObserveProperty()` macro is the easiest way to set up observation. The macr
 	ObserveProperty(observedObject, keyPath, { blockContents });
 ```
 Note that keyPath is not in quotes, and that blockContents isn't actually a block. The ObserveProperty macro tries to validate each property in the key path by ensuring that the compiler thinks observedObject.keyPath is a valid construction. It also tries to prevent you from using self or observedObject inside the block, as this can cause retain loops or other object lifetime issues. 
+
+The property validation is a useful defense against future changes that may be made to the object(s) you're observing. Code that uses the macro won't compile if the names of properties in the key path change, or the type of a property in the middle of the key path changes and the new type doesn't have the property that the path specifies.
 
 There is also a `ObservePropertyNoPropCheck()` variant that doesn't do validation on the key path. This variant is useful for cases where the key path contains entries that aren't actually properties. Is there someone your team that insists on using `array.count` instead of `[array count]`? This variant is for them.
 
@@ -232,7 +238,17 @@ If your block is observing a key path with more than one element, your block wil
 
 If you create an observation on a key path such as `"address.zipCode"` of the currentUser object and while the observation is active, someone sets the `address` property of the currentUser, Observable will stop observing the `zipCode` property of the previous `Address` object and start observing the `zipCode` of the new `Address` object. Additionally, if at the time you create the observation the `address` property is nil, Observable will remember to set up observation on the `address` object (and the address's `zipCode` property) when they receive a non-nil value.
 
-But what if you want to have your observation 'follow' the old address if the sets a new address for the currentUser, instead of switching over to the new address value? In that case, you should observe the `zipCode` key path of the `currentUser.address` object.
+But what if you want to have your observation 'follow' the old address if someone sets a new address for the currentUser, instead of switching over to the new address value? In that case, you should observe the `zipCode` key path of the `currentUser.address` object.
+
+In code:
+
+```C
+	// This observation follows the new address if the address object is replaced
+	ObserveProperty(currentUser, address.zipCode, ...);
+
+	// This observation follows the old address if the address object is replaced
+	ObserveProperty(currentUser.address, zipCode, ...);
+```
 
 The ability to observe a path that may be nil at the time of observation can be very powerful, as you can in many cases set up an observation on a model object path when your object gets initialized, and then fire off a request to the model layer to fetch the object you're observing. When the model layer completes the fetch (and attaches the fetched object to a model object hierarchy) you get informed automatically. 
 
@@ -240,7 +256,7 @@ But, careful selection of what object should be the 'root' of the observing key 
 
 
 ## Cleanup and Object Lifetime
-You should deregister observers when the observing object deallocs, although it's not a requirement. Unlike Apple's KVO, failing to deregister won't cause a crash. 
+You should deregister observers when the observing object deallocs, although it's not a requirement. Unlike Apple's KVO, failing to deregister won't cause an assert.  Also, deregistering multiple times won't cause an assert. Deregistering an observation you never made won't cause an assert. Registering the same observation multiple times won't cause an assert.
 
 An observation does not hold the observed or observing object strongly. A EBNObservable instance can be dealloc'ed while its properties are being observed, and an observer object can safely be dealloc'ed while it has observations in place. The only exception to this is that an EBNObservable subclass is held strongly from the time one of its observed properties is set until the observer block for that property is executed. This is to ensure the observers get called before the observed object goes away.
 
@@ -259,14 +275,12 @@ You can query an Observable object at any time to see which of its properties ar
 	- (NSUInteger) numberOfObservers:(NSString *) propertyName;
 ```
 
-If you're working on an Observer subclass, you can implement this method:
+You can also implement the following method to get notified when your properties are being observed. You will only get called when the number of observers for a particular property goes from 0 to 1 or 1 to 0. Additional observers for an already-observed property do not cause this method to be called.
 
 ```
 	- (void) property:(NSString *) propName observationStateIs:(BOOL) isBeingObserved;
 ```
-This method will tell you when your properties are being observed. You will only get called when the number of observers for a particular property goes from 0 to 1 or 1 to 0. Additional observers for an already-observed property do not cause this method to be called.
-
-An enterprising engineer could use this to dynamically decide when certain parts of an object needed to be loaded in from backing store, or requested from the network, based entirely on whether anyone want to know the value.
+An enterprising engineer could use this to dynamically decide when certain parts of an object needed to be loaded in from backing store, or requested from the network, based entirely on whether anyone wants to know the value.
 
 ## Dealloc Protocol
 If you're observing properties of some other object, you can implement the ObservedObjectDeallocProtocol. This protocol has one method, which tells you if an object whose properties you were observing has been deallocated.
@@ -298,6 +312,8 @@ The concept here is similar to Apple's `willChangeValueForKey:` and `didChangeVa
 3. Then call the manual trigger method, passing in the previous value : `[Address manuallyTriggerObserversForProperty:@"zipCode" previousValue:oldZip];`
 
 In most sane cases you will not have to deal with calling `manuallyTriggerObserversForProperty:`. But, because Observable will dynamically keep a key path up to date, meaning that as elements in the middle of a key path change value we update what object properties are being observed, it is important that you add manual trigger calls in cases where you can't call the setter method. Much of what these methods do is keep key paths up to date.
+
+An important caveat is that you do not have to do manual triggering for a property inside of that property's custom setter method.
 
 ## Debugging
 You can see who all is observing a given object by calling `debugShowAllObservers` on an observed object.
@@ -337,11 +353,11 @@ What this does is create an observation whose observer block will break into the
 * Setting a property to the same value it currently has will not cause observers to fire. For properties of object type, uses pointer comparison and not `isEqual:` to determine equality.
 * Observable is designed to work with ARC exclusively, and it requires iOS 6.
 * Observable has several asserts for programmer errors and places that may need improvement. One such place is that we only currently work with a few types of struct properties. Every struct property needs to be special cased.
-* Observable can interoperate with Apple's KVO. Both systems can observe the same property without interfering with each other.
+* Observable can interoperate with Apple's KVO. Both systems can observe the same property of the same object without interfering with each other.
 
 # Observable Collections Reference #
 
-Observable has subclasses for `NSMutableArray`, `NSMutableSet` and `NSMutableDictionary` that implement the `EBNObservable` protocol, meaning that they can be observed and their contents can be observed just like any Observable subclass.
+Observable has subclasses for `NSMutableArray`, `NSMutableSet` and `NSMutableDictionary` that can be observed and their contents can be observed just like any Observable subclass.
 
 Specifically:
 
@@ -357,12 +373,12 @@ Specifically:
 		});
 ```
 
-If wordDictionary were a property of some other object, you could also observe the path `@"otherObject.wordDictionary.steampunk"`. Similarly,  if an object in an EBNObservableDictionary is itself an Observable you can make a key path that goes through it, such as `@"otherObject.wordDictionary.steampunk.pronunciationGuide"`. 
+If wordDictionary were a property of some other object, you could also observe the path `@"otherObject.wordDictionary.steampunk"`. Similarly, you can make a key path that goes through the object in the dictionary, such as `@"otherObject.wordDictionary.steampunk.pronunciationGuide"`. 
 
 ## Common Features
-All 3 collection classes have `count` as an actual declared property. This means that you can observe the count of members of a collection, just as with any other Observable object.
+All 3 collection classes have `count` as a declared property. This means that you can observe the count of members of a collection, just as with any other Observable object.
 
-As with all other observable objects you can observe the key '*' and be informed whenever the collection is mutated. The '*' can only be the last element in the key path.
+As with all other observable objects you can observe the key '*' and be informed whenever the collection is mutated. The collection objects treat '*' in a special way, and don't place observations on the actual properties of the collection objects (such as `count` and `description`). But the semantics are the same--your observer gets called in response to any mutation. The '*' can only be the last element in the key path.
 
 All 3 classes conform to NSSecureCoding, NSCopying, and NSMutableCopying, although they do not copy or encode observations. That is, a copied collection or a encoded/decoded collection will not carry over any of the observations that were active in the source collection object.
 
@@ -377,6 +393,8 @@ Creating observable sets requires that we have some way to specify a member of a
 EBNObservableSet will call observers when observed objects are actually added or removed from the set. Calling `addObject:` on an object that is already in the set (or where the set already has an object that passes the isEqual: test) will not execute observers; neither will calling `removeObject:` on an object not in the set.
 
 There is also an `objectForKey:` method, letting you find the object in the set that matches a generated key.
+
+Really, the most common use case is to observe '*' on the set and get notified whenever the set is mutated.
 
 ## EBNObservableArray ##
 
@@ -396,13 +414,13 @@ It is allowed to create index-following observations on indexes that are beyond 
 
 ## Minutiae
 
-The collection classes work by declaring themselves to be subclasses of their NSMutable* classes, while also using composition to actually implement their collection behavior with an instance variable of the same NSMutable* type. They then have a EBNObservable collection proxy object which is used as the message forwarding target for EBNObservable messages sent to the collection. 
+The collection classes work by declaring themselves to be subclasses of their NSMutable* classes, while also using composition to actually implement their collection behavior with an instance variable of the same NSMutable* type. 
 
 The reason for the odd subclass-plus-private-implementation thing is because the NS collection classes are class clusters, where the top-level object just defines the protocol and hidden subclasses actually implement the behavior. Therefore, our collection objects need to subclass Apple's in order to interoperate as collections, but they can't call super to implement their behaviors as the superclass doesn't implement them. 
 
 # LazyLoader Reference #
 
-LazyLoader is a subclass of Observable, and introduces a few new capabilities appropriate for model objects. LazyLoader allows for the creation of several types of *synthetic properties*, which in this context means a property whose value is synthesized from other values.
+LazyLoader is a class that leverages Observable to introduce a few new capabilities appropriate for model objects. LazyLoader allows for the creation of several types of *synthetic properties*, which in this context means a property whose value is synthesized from other values.
 
 Using LazyLoader requires that you declare your object to be a subclass of LazyLoader. It is intended to be used for objects in the model layer of your application.
 
@@ -431,7 +449,7 @@ All lazily loaded properties need to be declared in the object's code, generally
 
 These calls will replace the getter method for the given property with a wrapper method that checks to see if the property is in a valid state, calls through to the original getter method if the property state isn't valid, and returns a cached value if the property state is valid.
 
-If the program state changes such that a Lazily Loaded property's value is no longer correct, you can reflect this by invalidating the value. Invalidating marks the property invalid, meaning the value will get recomputed again, later. Again, there's a method and a macro:
+If the program state changes such that a Lazily Loaded property's value is no longer correct, you can reflect this by invalidating the value. Invalidating marks the property invalid, meaning the value will get recomputed later. Again, there's a method and a macro:
 
 ```C
 	// Method
@@ -470,14 +488,16 @@ Internally, LazyLoader uses Observable to watch the dependent paths; this means 
 
 ## Custom Loaders ##
 
-This feature should be considered experimental at this point. The idea is to allow for the creation of a loader block that knows how to compute the value of any property of the object, such as in the case where an object actually stores values in a dictionary, but exposes values via properties. So, instead of writing custom getters for each property that all look the same, you can write one method that takes a property name and sets that property to be lazy loaded with a custom block that knows how to get that property value from the dictionary, and can set it with setValue:forKey:.
+Classes that manage a set of values that are stored in a dictionary or dictionary-like-object but expose a bunch of properties as the API for retrieving the dictionary values are really very common. LazyLoader makes the creation of these sorts of classes easier by including support for custom loader methods. 
 
-However, this makes it completely muddled in the case where you try to use anything from self--the custom loader block isn't local to the object, it's invoked for any instance of that class. I'll be redoing this code in the near future. 
+When you declare a synthetic you can specify a selector to be a loader for that property. The loader method gets called when LazyLoader would otherwise call your getter method, but the loader method takes the name of the property that needs to be loaded:
 
 ```C
-	typedef void (^EBNLazyLoaderBlock)(id blockSelf);
-	- (void) syntheticProperty:(NSString *) property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock;
+	- (void) loader:(NSString *) propertyName
 ```
+
+In this way, you can declare a single loader method for all your classes' synthetic properties, and that method's job is to set the ivar backing the given property to the correct value, usually by calling `setValue:forKey:`. This is much easier than having to write custom getters for each property or doing dynamic message resolution trickery.
+
 ## Hybrid Properties ##
 
 Synthetic properties compute their value in their getter method, and therefore usually don't have or need a setter method. With LazyLoader however, you can have properties that usually compute their value, but can also have their value overridden via the setter. No extra setup is required for this, just make sure your property is declared `readwrite`. Calling the setter will set the value as normal, and will mark the property as being valid. The property will keep the set value until the next time it is invalidated.
@@ -486,9 +506,9 @@ It is still unwise to call a property's setter method from within its getter, as
 
 ## Observing Synthetic Properties ##
 
-A lazily loaded property that is being observed, and isn't the last element in the observation's key path, will effectively stop being lazily loaded because Observable needs to know the new value of the property immediately when it changes, in order to keep the observation on the key path up to date. Observable may need to set up observations on properties of the newly set object (and properties on that object, and so on) which forces the lazy loaded property to computed its value immediately.
+A lazily loaded property that is being observed, and isn't the last element in the observation's key path, will effectively stop being lazily loaded because Observable needs to know the new value of the property immediately when it changes, in order to keep the observation on the key path up to date. Observable may need to set up observations on properties of the newly set object (and properties on that object, and so on) which forces the lazy loaded property to compute its value immediately.
 
-This doesn't mean that a property can't be both synthetic and observed, just that observing will of necessity moot some of the benefits of lazy loading. Sometimes.
+This doesn't mean that a property can't be both synthetic and observed, just that observing sometimes needs to force immediate evaluation of the lazily loaded property.
 
 ## Chaining Synthetic Properties ##
 
@@ -532,20 +552,19 @@ You can also force all synthetic properties to be computed immediately (and ther
 
 # Future Work #
 
-When working on this code base, be aware that there's a fair number of unit tests implemented. Use them. I'm no huge fan of unit testing, but this codebase is just the sort of thing that should have it.
+When working on this code base, be aware that there's a fair number of unit tests implemented. Use them. This codebase is just the sort of thing that gains a lot from unit test support.
 
 There's lots of room to improve on this code. Here's some good possibilities, in no particular order:
 
-* As previously mentioned, Observable could be made into a category on NSObject, and the data it stores in instance variables could be placed into associated objects instead. 
-* LazyLoader could also be made into a category on NSObject.
-* Even better would be to make an accessor method that returns the instance variables, where the accessor would return the instance variables for Observable subclasses, and values from the associated object for everything else.
-* Observable uses @synchronize in places where it needs thread-safety. This is very safe, as @synchronize handles unlocking in the case of exceptions being thrown, but it is quite slow compared to other available synchronization methods.
+* LazyLoader could be made into a category on NSObject.
+* Observable uses @synchronize in places where it needs thread-safety. This is very safe, as @synchronize handles unlocking in the case of exceptions being thrown, but it is quite slow compared to other available synchronization methods. As always, profile your code first, and only undertake this optimization if you find that @synchronize is actually slowing you down.
 * LazyLoader is designed to make it easy to enable and disable its functionality--in most cases, just commenting out one line of code will return a property to its non-synthetic state. This is the main reason I didn't go with a model where you could declare a block that would compute the property's value--the block would work nothing like the getter method and testing a property with and without lazy loading would become very difficult. However, this means that the point in the code where you declare a property synthetic is often far away from where its value is computed. There's a couple of ways to remedy this; I'm interested in what people come up with.
 *   The demonstration app is currently pretty weak; I didn't even mention it in this documentation. Writing something that loads some data from a web service call, puts the data into a model object, and has views that observe the model object's properties would be ideal.
+*   The LazyLoader documentation concerning loader methods discusses classes that expose a property-based API but store their values in a dictionary, but the SDK doesn't currently include one of these classes.
 *   More unit tests, as ever.
 
 # Credits #
 
-* Chall Fry - engineering
+* Chall Fry - engineering <chall@challfry.com>
 * Ben Yarger - QE, QA, unit test cases
 * Mark Yuan - Open Sourcing help

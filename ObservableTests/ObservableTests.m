@@ -8,7 +8,8 @@
     Unit tests.
 */
 
-#import <XCTest/XCTest.h>
+@import XCTest;
+
 #import "EBNObservable.h"
 
 // This punches the hole that allows us to force the observer notifications
@@ -28,7 +29,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 //
 // Observable Test Object A.
 //
-@interface ModelObjectA : EBNObservable
+@interface ModelObjectA : NSObject
 
 @property (assign) bool					boolProperty;
 @property (getter = isCustomBoolProperty) bool customBoolProperty;
@@ -37,6 +38,8 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 @property (assign) double				doubleProperty;
 
 @property NSString						*stringProperty1;
+
+@property NSMutableData					*dataProperty1;
 
 @property (nonatomic) ModelObjectB		*modelObjectBProperty;
 @property (nonatomic) ModelObjectC		*modelObjectCProperty;
@@ -51,7 +54,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 //
 // Observable Test Object B
 //
-@interface ModelObjectB : EBNObservable
+@interface ModelObjectB : NSObject
 
 @property (assign) int					intProperty;
 
@@ -385,7 +388,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssertEqual(self.observerCallCount1, 4, @"Observation block got called wrong number of times.");
 	
 	NSLog(@"moA Observed Properties: %@", [moA allObservedProperties]);
-	XCTAssertEqual([[moA allObservedProperties] count], 9, @"Not all properties appear to be obseved.");
+	XCTAssertEqual([[moA allObservedProperties] count], 10, @"Not all properties appear to be obseved.");
 	
 	XCTAssertEqual([moA numberOfObservers:@"stringProperty1"], 1, @"numberOfObservers doesn't say observed prop is observed.");
 
@@ -586,20 +589,79 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 - (void) testAppleKVOCompatibility
 {
 	__block int observerCallCount = 0;
-
-	ObserveProperty(moA, intProperty,
+	
+	
+	// First use Apple's KVO, then Observable to observe on the object
+	ModelObjectA *appleKVOFirst = [[ModelObjectA alloc] init];
+	[appleKVOFirst addObserver:self forKeyPath:@"intProperty" options:0 context:NULL];
+	ObserveProperty(appleKVOFirst, intProperty,
 	{
 		observerCallCount++;
 	});
 	
-	[moA addObserver:self forKeyPath:@"intProperty" options:0 context:NULL];
-	
-	moA.intProperty = 77;
+	appleKVOFirst.intProperty = 77;
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
 	XCTAssertEqual(observerCallCount, 1, @"Wrong number of calls to observer block.");
 	XCTAssertTrue(_appleKVOWasCalled, @"Apple KVO method wasn't called.");
+	
+	observerCallCount = 0;
 
+	// This time we do Observable first, then Apple's KVO
+	ModelObjectA *observableFirst = [[ModelObjectA alloc] init];
+	ObserveProperty(observableFirst, intProperty,
+	{
+		observerCallCount++;
+	});
+	XCTAssertEqual([observableFirst class], [ModelObjectA class], @"Class method returns wrong thing.");
+	XCTAssertEqual([observableFirst superclass], [NSObject class], @"Class method returns wrong thing.");
+	[observableFirst addObserver:self forKeyPath:@"intProperty" options:0 context:NULL];
+	
+	observableFirst.intProperty = 77;
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(observerCallCount, 1, @"Wrong number of calls to observer block.");
+	XCTAssertTrue(_appleKVOWasCalled, @"Apple KVO method wasn't called.");
+	
+	// Because Apple's KVO is pissy
+	[appleKVOFirst removeObserver:self forKeyPath:@"intProperty"];
+	[observableFirst removeObserver:self forKeyPath:@"intProperty"];
+	
+	// Test that further KVO registrations don't cause a subclassing cascade
+	[appleKVOFirst addObserver:self forKeyPath:@"boolProperty" options:0 context:NULL];
+	XCTAssertEqual([appleKVOFirst class], [ModelObjectA class], @"Class method returns wrong thing.");
+	XCTAssert(strcmp(object_getClassName(appleKVOFirst), "NSKVONotifying_ModelObjectA") == 0,
+			@"The actual class for this object should the Apple KVO subclass.");
+	XCTAssertEqual(class_getSuperclass(object_getClass(appleKVOFirst)), [ModelObjectA class],
+			@"The base class should be the direct superclass of the Apple KVO subclass at this point.");
+
+	// Same idea with the Observable-first path
+	[observableFirst addObserver:self forKeyPath:@"boolProperty" options:0 context:NULL];
+	ObserveProperty(observableFirst, boolProperty,
+	{
+		observerCallCount++;
+	});
+	
+		// Note that this is not the correct answer, but Apple's KVO has a bug where they return the previous
+		// subclass' type, not the previous value of [self class].
+	XCTAssert(strcmp(class_getName([observableFirst class]), "NSKVONotifying_ModelObjectA"),
+			@"Class method returns wrong thing.");
+	
+		//
+	XCTAssertEqual([[observableFirst class] getProperBaseClass_ebn], [ModelObjectA class],
+			@"getProperBaseClass isn't returning the base class.");
+	
+	XCTAssert(strcmp(object_getClassName(observableFirst), "NSKVONotifying_ModelObjectA_EBNShadowClass") == 0,
+			@"The actual class for this object should be Observable's subclass of KVO's subclass of the original object.");
+	XCTAssert(strcmp(class_getName(class_getSuperclass(object_getClass(observableFirst))), "ModelObjectA_EBNShadowClass") == 0,
+			@"Superclass of shadowclass should be Observable-created subclass.");
+	XCTAssertEqual(class_getSuperclass(class_getSuperclass(object_getClass(observableFirst))), [ModelObjectA class],
+			@"Superclass of superclass of shadowclass should be base class in this case.");
+
+	// Because Apple's KVO is pissy
+	[appleKVOFirst removeObserver:self forKeyPath:@"boolProperty"];
+	[observableFirst removeObserver:self forKeyPath:@"boolProperty"];
+	
 }
+
 - (void) testImmedBlock
 {
 	__block int observerCallCount = 0;
@@ -634,25 +696,62 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
     }
 }
 
-#if 0
-- (void) testWeakReference
+- (void) testNSCFObjects
 {
-    XCTAssertTrue(false, @"Requires test implementation.");
+	// Create a CF object, bridge it to a NS pointer, and observe it.
+	ModelObjectA *moa = [[ModelObjectA alloc] init];
+	CFStringRef cfStr = CFSTR("this is literally a string literal");
+	moa.stringProperty1 = CFBridgingRelease(cfStr);
+	
+	[moa tell:self when:@"stringProperty1" changes:^(ObservableTests *blockSelf, NSString *observed)
+	{
+		blockSelf.observerCallCount1++;
+	}];
+	
+	cfStr = CFSTR("this is another literal");
+	moa.stringProperty1 = CFBridgingRelease(cfStr);
+	
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssert(_observerCallCount1 == 1, @"Wrong number of calls to observer block.");
+	
+	// Same idea as above, but now we're making a CF object whose NS counterpart has settable properties,
+	// and observing the properties of the CF object via a keypath
+	CFMutableDataRef dataRef = CFDataCreateMutable(nil, 100);
+	moa.dataProperty1 = CFBridgingRelease(dataRef);
+	
+	[moa tell:self when:@"dataProperty1.length" changes:^(ObservableTests *blockSelf, NSMutableData *observed)
+	{
+		blockSelf.observerCallCount1++;
+	}];
+	
+	[moa.dataProperty1 increaseLengthBy:50];
+	
+	// In this case, the observer won't fire because we can't observe the CFMutableDataRef
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssert(_observerCallCount1 == 1, @"Wrong number of calls to observer block.");
 }
 
-- (void) testDeallocOfSub
+- (void) testClassHiding
 {
-    // Need to check that a keypath of ObjA.ObjB.ObjC where ObjC is referenced
-    // outside of ObjB correctly deallocs ObjB and notifies keypath observer
-    // of dealloc.
-    XCTAssertTrue(false, @"Requires test implementation.");
+	ModelObjectA *moa = [[ModelObjectA alloc] init];
+	
+	Class origClass = [moa class];
+	XCTAssert(origClass == [ModelObjectA class], @"Original class doesn't match up.");
+	
+	[moa tell:self when:@"stringProperty1" changes:^(ObservableTests *blockSelf, NSString *observed)
+	{
+		blockSelf.observerCallCount1++;
+	}];
+	
+	Class shadowClass = object_getClass(moa);
+	Class baseClass = [moa class];
+	XCTAssert(strcmp(class_getName(shadowClass), "ModelObjectA_EBNShadowClass") == 0, @"Shadow Class has wrong name.");
+	XCTAssert(baseClass == [ModelObjectA class], @"Base class doesn't match up.");
+	
+	
 }
 
-- (void) testCollections
-{
-    XCTAssertTrue(false, @"Requires test implementation.");
-}
-#endif
+
 
 @end
 

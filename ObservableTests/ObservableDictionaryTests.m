@@ -8,7 +8,8 @@
     Unit tests.
 */
 
-#import <XCTest/XCTest.h>
+@import XCTest;
+
 #import "EBNObservable.h"
 #import "EBNObservableCollections.h"
 

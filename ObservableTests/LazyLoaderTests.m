@@ -8,8 +8,8 @@
     Unit tests.
 */
 
-#import <CoreGraphics/CoreGraphics.h>
-#import <XCTest/XCTest.h>
+@import CoreGraphics;
+@import XCTest;
 #import "EBNLazyLoader.h"
 
 @interface LazyObject1 : EBNLazyLoader

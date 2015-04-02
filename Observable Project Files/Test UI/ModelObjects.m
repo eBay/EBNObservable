@@ -1,5 +1,5 @@
 /****************************************************************************************************
-	ModelObject1.m
+	ModelObjects.m
 	Observable
 	
     Created by Chall Fry on 9/27/13.
@@ -8,7 +8,7 @@
     These are demonstration model objects, here so that we can demonstrate Observable.	
 */
 
-#import "ModelObject1.h"
+#import "ModelObjects.h"
 
 @implementation ModelObject1
 
@@ -40,6 +40,16 @@
 
 
 @implementation ModelObject2
+
+
+@end
+
+@implementation ModelObject3
+
+
+@end
+
+@implementation ModelObject4
 
 
 @end

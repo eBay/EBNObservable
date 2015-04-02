@@ -10,7 +10,7 @@
 */
 
 #import "SubViewController.h"
-#import "ModelObject1.h"
+#import "ModelObjects.h"
 
 @interface SubViewController ()
 

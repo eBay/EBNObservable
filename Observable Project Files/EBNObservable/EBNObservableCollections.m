@@ -9,34 +9,6 @@
 #import "DebugUtils.h"
 #import "EBNObservableCollections.h"
 
-@class EBNObservableCollectionProxy;
-
-id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector);
-
-id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
-{
-	if (aSelector == @selector(tell:when:changes:) ||
-			aSelector == @selector(tell:whenAny:changes:) ||
-			aSelector == @selector(stopTelling:aboutChangesTo:) ||
-			aSelector == @selector(stopTelling:aboutChangesToArray:) ||
-			aSelector == @selector(stopTellingAboutChanges:) ||
-			aSelector == @selector(stopAllCallsTo:) ||
-			aSelector == @selector(property:observationStateIs:) ||
-			aSelector == @selector(manuallyTriggerObserversForProperty:previousValue:) ||
-			aSelector == @selector(numberOfObservers:) ||
-			aSelector == @selector(allObservedProperties) ||
-			aSelector == @selector(observe:using:) ||
-			aSelector == @selector(reapBlocks) ||
-			aSelector == @selector(createKeypath:atIndex:) ||
-			aSelector == @selector(removeKeypath:atIndex:))
-	{
-		return object;
-	} else
-	{
-		return nil;
-	}
-}
-
 	// This is a proxy object that we create during archiving, because archiving custom subclasses of
 	// class clusters doesn't seem to work right--the cluster seems to override the type of object that
 	// gets archived.
@@ -46,111 +18,73 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 @property (strong)	NSMutableDictionary	*dict;
 @end
 
-
-	// This is the observer proxy that goes into the custom collection subclasses and actually
-	// tracks the observations. Since the collection classes need to subclass the
-@interface EBNObservableCollectionProxy : EBNObservable
-@end
-
-@implementation EBNObservableCollectionProxy
-{
-	// The collection holds the proxy strongly; it's our parent.
-	NSObject <EBNObservableProtocol> *__weak collectionObject;
-}
+@implementation EBNObservableArchiverProxy
 
 /****************************************************************************************************
-	initForCollection:
+	initWithCoder:
 	
-	The collection proxy needs to be able to get to the collection object.
+	NSCoding. This inits a proxy object used for encode and decode, to get around an issue with how
+	class clusters decide what type of object to encode.
 */
-- (instancetype) initForCollection:(id<EBNObservableProtocol>) collectionObj
+- (instancetype) initWithCoder:(NSCoder *)decoder
 {
 	if (self = [super init])
 	{
-		self->collectionObject = collectionObj;
+		// 2 of these will be nil
+		self.dict = [decoder decodeObjectOfClass:[NSMutableDictionary class] forKey:@"dict"];
+		self.set = [decoder decodeObjectOfClass:[NSMutableSet class] forKey:@"set"];
+		self.array = [decoder decodeObjectOfClass:[NSMutableArray class] forKey:@"array"];
 	}
+	
 	return self;
 }
 
 /****************************************************************************************************
-	swizzleImplementationForSetter:
+	awakeAfterUsingCoder:
 	
-	Since we're not observing properties, we don't actually implement this method.
+	NSCoding. Observation information does not get encoded or decoded as part of NSCoding; only the 
+	collection gets saved/restored.
 */
-+ (bool) swizzleImplementationForSetter:(NSString *) propName
+- (id) awakeAfterUsingCoder:(NSCoder *)decoder
 {
-	return true;
-}
-
-/****************************************************************************************************
-	valueForKeyEBN:
-	
-*/
-- (id) valueForKeyEBN:(NSString *)key
-{
-	return [collectionObject valueForKeyEBN:key];
-}
-
-/****************************************************************************************************
-	createKeypath:atIndex:
-	
-	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
-	instead of iterating through each property. Collection mutators then trigger the '*' observations
-	when they get called.
-*/
-- (bool) createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
-{
-	NSString *propName = entryInfo->_keyPath[index];
-	return [self createKeypath:entryInfo atIndex:index forProperty:propName];
-}
-
-/****************************************************************************************************
-	removeKeypath:atIndex:
-
-	For object-following array properties, the 'key' pointing to the property can move around as
-	objects are added/removed from the array. When we remove the keypath, we need to go find
-	where the entry has moved to.
-	
-	Also, for '*' observations, we directly remove the '*' entry from the table.
-	
-	Returns TRUE if the observation path was removed successfully.
-*/
-- (bool) removeKeypath:(const EBNKeypathEntryInfo *) removeEntry atIndex:(NSInteger) index
-{
-	if (index >= [removeEntry->_keyPath count])
-		return false;
-
-	bool observerTableRemoved = false;
-	NSString *propName = removeEntry->_keyPath[index];
-	
-	// For array collections, we need to handle object-following observations (like "array.4")
-	// in a special way. That special way is to look through every property to find where
-	// the observation may have moved to. And yes, by 'special' you can infer 'because the
-	// data model is designed wrong'.
-	if ([collectionObject isKindOfClass:[NSArray class]] && isdigit([propName characterAtIndex:0]))
+	if (self.dict)
 	{
-		@synchronized(self)
-		{
-			for (NSString *propertyKey in [self->_observedMethods allKeys])
-			{
-				[self removeKeypath:removeEntry atIndex:index forProperty:propertyKey];
-			}
-		}
-	} else
+		EBNObservableDictionary *finalDict = [[EBNObservableDictionary alloc] init];
+		[finalDict setDictionary:self.dict];
+		return finalDict;
+	} else if (self.set)
 	{
-		return [self removeKeypath:removeEntry atIndex:index forProperty:propName];
+		EBNObservableSet *finalSet = [[EBNObservableSet alloc] init];
+		[finalSet setSet:self.set];
+		return finalSet;
+	} else if (self.array)
+	{
+		EBNObservableArray *finalArray = [[EBNObservableArray alloc] init];
+		[finalArray setArray:self.array];
+		return finalArray;
 	}
-		
-	return observerTableRemoved;
+	
+	return nil;
 }
 
+/****************************************************************************************************
+	encodeWithCoder:
+	
+	NSCoding. Encodes a EBNObservable collection by encoding the composed base Cocoa collection object.
+*/
+- (void) encodeWithCoder:(NSCoder *)encoder
+{
+	if (self.dict)
+		[encoder encodeObject:self.dict forKey:@"dict"];
+	else if (self.set)
+		[encoder encodeObject:self.set forKey:@"set"];
+	else if (self.array)
+		[encoder encodeObject:self.array forKey:@"array"];
+}
 
 @end
 
-	// This class uses forwardingTargetForSelector:, to dynamically resolve a bunch of methods,
-	// so we're turning off the protocol method not implemented warnings.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wprotocol"
+
 #pragma mark
 @implementation EBNObservableDictionary
 {
@@ -158,7 +92,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	// to implement NSMutableDictionary. See info on class clusters for why.
 	NSMutableDictionary 			*_dict;
 	
-	EBNObservableCollectionProxy	*_observationProxy;
+	// observedMethods maps properties (specified by the setter method name, as a string) to
+	// a NSMutableSet of blocks to be called when the property changes.
+	NSMutableDictionary *_observedMethods;
 }
 
 #pragma mark NSDictionary Required Methods
@@ -172,10 +108,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((self->_dict = [[NSMutableDictionary alloc] init]))
-		{
-			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(self->_dict = [[NSMutableDictionary alloc] init]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -194,10 +127,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((self->_dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
-		{
-			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(self->_dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -216,10 +146,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((self->_dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
-		{
-			self->_observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(self->_dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -312,6 +239,8 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 /****************************************************************************************************
 	setObject:forKey:
 	
+	Passes the setObject to our internal private dictionary, and attempts to notify observers of the change.
+	Note that dictionaries don't require keys be strings, but if they aren't we won't notify observers.
 */
 - (void)setObject:(id)newValue forKey:(id < NSCopying >)aKey
 {
@@ -329,13 +258,13 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		if ((previousValue == nil) || ![newValue isEqual:previousValue])
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[self->_observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:newValue];
-			[self->_observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+			[self manuallyTriggerObserversForProperty_ebn:aKeyString previousValue:previousValue newValue:newValue];
+			[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[self->_observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
@@ -359,40 +288,66 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		if (previousValue != nil)
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[self->_observationProxy manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:nil];
-			[self->_observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+			[self manuallyTriggerObserversForProperty_ebn:aKeyString previousValue:previousValue newValue:nil];
+			[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[self->_observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
 #pragma mark Keypaths
 
 /****************************************************************************************************
-	valueForKeyEBN:
+	valueForKey_ebn:
 	
 */
-- (id) valueForKeyEBN:(NSString *)key
+- (id) valueForKey_ebn:(NSString *)key
 {
 	return [self objectForKey:key];
 }
 
-#pragma mark Observable Calls get Forwarded
+#pragma mark Observable
 
 /****************************************************************************************************
-	forwardingTargetForSelector:
+	observedMethodsDict_ebn
 	
 */
-- (id) forwardingTargetForSelector:(SEL)aSelector
+- (NSMutableDictionary *) observedMethodsDict_ebn
 {
-	id forwardTarget = EBN_ForwardingTargetGuts(self->_observationProxy, aSelector);
-	if (!forwardTarget)
-		return [super forwardingTargetForSelector:aSelector];
+	@synchronized(self)
+	{
+		if (!_observedMethods)
+			_observedMethods = [[NSMutableDictionary alloc] init];
+	}
+
+	return _observedMethods;
+}
+
+/****************************************************************************************************
+	swizzleImplementationForSetter_ebn:
 	
-	return forwardTarget;
+	Since we're not observing properties, we don't actually implement this method. Better said, we
+	override the default implementation to do nothing.
+*/
++ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
+{
+	return true;
+}
+
+/****************************************************************************************************
+	createKeypath_ebn:atIndex:
+	
+	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
+	instead of iterating through each property. Collection mutators then trigger the '*' observations
+	when they get called.
+*/
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+{
+	NSString *propName = entryInfo->_keyPath[index];
+	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
 }
 
 @end
@@ -404,7 +359,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	// to implement NSMutableSet. See info on class clusters for why.
 	NSMutableSet 					*set;
 	
-	EBNObservableCollectionProxy	*observationProxy;
+	// observedMethods maps properties (specified by the setter method name, as a string) to
+	// a NSMutableSet of blocks to be called when the property changes.
+	NSMutableDictionary *_observedMethods;
 }
 
 #pragma mark NSSet Required Methods
@@ -418,10 +375,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((set = [[NSMutableSet alloc] init]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(set = [[NSMutableSet alloc] init]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -440,10 +394,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((set = [[NSMutableSet alloc] initWithObjects:objects count:count]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(set = [[NSMutableSet alloc] initWithObjects:objects count:count]))
 		{
 			// If set didn't get initialized, neither did we
 			self = nil;
@@ -462,10 +413,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((set = [[NSMutableSet alloc] initWithCapacity:numItems]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(set = [[NSMutableSet alloc] initWithCapacity:numItems]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -569,13 +517,13 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	if (previousValue == nil)
 	{
 		NSString *keyForNewValue = [EBNObservableSet keyForObject:object];
-		[observationProxy manuallyTriggerObserversForProperty:keyForNewValue previousValue:previousValue
+		[self manuallyTriggerObserversForProperty_ebn:keyForNewValue previousValue:previousValue
 				newValue:object];
-		[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 	}
 	
 	// The count property may have changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[set count]]];
 }
 
@@ -593,13 +541,13 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	if (previousValue)
 	{
 		NSString *keyForPrevValue = [EBNObservableSet keyForObject:previousValue];
-		[observationProxy manuallyTriggerObserversForProperty:keyForPrevValue previousValue:previousValue
+		[self manuallyTriggerObserversForProperty_ebn:keyForPrevValue previousValue:previousValue
 				newValue:nil];
-		[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 	}
 	
 	// The count property may have changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[set count]]];
 }
 
@@ -644,36 +592,53 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 }
 
 /****************************************************************************************************
-	valueForKeyEBN:
+	valueForKey_ebn:
 	
 */
-- (id) valueForKeyEBN:(NSString *)key
+- (id) valueForKey_ebn:(NSString *)key
 {
 	return [self objectForKey:key];
 }
 
-#pragma mark Observable Calls get Forwarded
+#pragma mark Observable
 
 /****************************************************************************************************
-	forwardingTargetForSelector:
+	observedMethodsDict_ebn
 	
 */
-- (id) forwardingTargetForSelector:(SEL)aSelector
+- (NSMutableDictionary *) observedMethodsDict_ebn
 {
-	id forwardTarget = EBN_ForwardingTargetGuts(self->observationProxy, aSelector);
-	if (!forwardTarget)
-		return [super forwardingTargetForSelector:aSelector];
-	
-	return forwardTarget;
+	@synchronized(self)
+	{
+		if (!_observedMethods)
+			_observedMethods = [[NSMutableDictionary alloc] init];
+	}
+
+	return _observedMethods;
 }
 
 /****************************************************************************************************
-	debugShowAllObservers
+	swizzleImplementationForSetter_ebn:
 	
+	Since we're not observing properties, we don't actually implement this method. Better said, we
+	override the default implementation to do nothing.
 */
-- (NSString *) debugShowAllObservers
++ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
 {
-	return [observationProxy debugShowAllObservers];
+	return true;
+}
+
+/****************************************************************************************************
+	createKeypath_ebn:atIndex:
+	
+	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
+	instead of iterating through each property. Collection mutators then trigger the '*' observations
+	when they get called.
+*/
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+{
+	NSString *propName = entryInfo->_keyPath[index];
+	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
 }
 
 @end
@@ -686,7 +651,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	// NSMutableArray doesn't actually implement an array; it's just a protocol class.
 	NSMutableArray		 			*array;
 	
-	EBNObservableCollectionProxy	*observationProxy;
+	// observedMethods maps properties (specified by the setter method name, as a string) to
+	// a NSMutableSet of blocks to be called when the property changes.
+	NSMutableDictionary *_observedMethods;
 }
 
 #pragma mark NSArray Required Methods
@@ -699,10 +666,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((array = [[NSMutableArray alloc] init]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(array = [[NSMutableArray alloc] init]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -720,10 +684,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((array = [[NSMutableArray alloc] initWithObjects:objects count:count]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(array = [[NSMutableArray alloc] initWithObjects:objects count:count]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -741,10 +702,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 {
 	if (self = [super init])
 	{
-		if ((array = [[NSMutableArray alloc] initWithCapacity:numItems]))
-		{
-			observationProxy = [[EBNObservableCollectionProxy alloc] initForCollection:self];
-		} else
+		if (!(array = [[NSMutableArray alloc] initWithCapacity:numItems]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -836,9 +794,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		
 	NSMutableArray *adjustObservations = [[NSMutableArray alloc] init];
 	
-	@synchronized(observationProxy)
+	@synchronized(self)
 	{
-		for (NSString *propertyKey in observationProxy->_observedMethods)
+		for (NSString *propertyKey in self.observedMethodsDict_ebn)
 		{
 			// array.#4 observes the object at index 4, and follows the index
 			if ([propertyKey hasPrefix:@"#"])
@@ -850,14 +808,14 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 					if (observedIndex + 1 < [array count])
 						prevValueForIndex = array[observedIndex + 1];
 					id newValueForIndex = array[observedIndex];
-					[observationProxy manuallyTriggerObserversForProperty:propertyKey previousValue:prevValueForIndex
+					[self manuallyTriggerObserversForProperty_ebn:propertyKey previousValue:prevValueForIndex
 							newValue:newValueForIndex];
 				}
 
 			} else if ([propertyKey isEqualToString:@"*"])
 			{
 				// If we have observations on '*', run them here
-				[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+				[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 			} else
 			{
 				// array.4 observes the object at index 4 *at the time observation starts*, and follows that object
@@ -886,15 +844,14 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] + 1];
-			NSMapTable *observerTable = observationProxy->_observedMethods[moveFromPropKey];
-			[observationProxy->_observedMethods removeObjectForKey:moveFromPropKey];
-			[observationProxy->_observedMethods setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = self.observedMethodsDict_ebn[moveFromPropKey];
+			[self.observedMethodsDict_ebn removeObjectForKey:moveFromPropKey];
+			[self.observedMethodsDict_ebn setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
 	// The count property changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount]];
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 }
 
 /****************************************************************************************************
@@ -912,9 +869,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	NSMutableArray *adjustObservations = [[NSMutableArray alloc] init];
 	NSMutableArray *stopObservingProperties = [[NSMutableArray alloc] init];
 	
-	@synchronized(observationProxy)
+	@synchronized(self)
 	{
-		for (NSString *propertyKey in observationProxy->_observedMethods)
+		for (NSString *propertyKey in self.observedMethodsDict_ebn)
 		{
 			if ([propertyKey hasPrefix:@"#"])
 			{
@@ -932,20 +889,19 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 					id newValueForIndex = nil;
 					if (observedIndex < [array count])
 						newValueForIndex = array[observedIndex];
-					[observationProxy manuallyTriggerObserversForProperty:propertyKey
+					[self manuallyTriggerObserversForProperty_ebn:propertyKey
 							previousValue:prevValueForIndex newValue:newValueForIndex];
 				}
 			} else if ([propertyKey isEqualToString:@"*"])
 			{
 				// If we have observations on '*', run them here
-				[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+				[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
 			} else
 			{
 				NSUInteger keyIndex = [propertyKey integerValue];
 				if (keyIndex == removeIndex)
 				{
-					[observationProxy manuallyTriggerObserversForProperty:propertyKey previousValue:prevValue
-							newValue:nil];
+					[self manuallyTriggerObserversForProperty_ebn:propertyKey previousValue:prevValue newValue:nil];
 					
 					// When this 'object-following' property is removed from the array, stop observing,
 					// since we can't observe this path anymore.
@@ -983,14 +939,14 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] - 1];
-			NSMapTable *observerTable = observationProxy->_observedMethods[moveFromPropKey];
-			[observationProxy->_observedMethods removeObjectForKey:moveFromPropKey];
-			[observationProxy->_observedMethods setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = self.observedMethodsDict_ebn[moveFromPropKey];
+			[self.observedMethodsDict_ebn removeObjectForKey:moveFromPropKey];
+			[self.observedMethodsDict_ebn setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
 	// The count property changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount]];
 
 }
@@ -1008,12 +964,11 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	NSUInteger prevCount = [array count];
 	[array addObject:anObject];
 	
-	[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
-	[observationProxy manuallyTriggerObserversForProperty:propHashIndexString previousValue:nil newValue:anObject];
+	[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+	[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:nil newValue:anObject];
 	
 	// The count property changed; notify for it.
-	[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount]];
+	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 }
 
 /****************************************************************************************************
@@ -1038,19 +993,16 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 		NSString *propIndexString = [[NSString alloc] initWithFormat:@"%lu", (long) prevLastIndex];
 		NSString *propHashIndexString = [[NSString alloc] initWithFormat:@"#%lu", (long) prevLastIndex];
 		
-		[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
-		[observationProxy manuallyTriggerObserversForProperty:propIndexString
-				previousValue:prevValue newValue:nil];
-		[observationProxy manuallyTriggerObserversForProperty:propHashIndexString
-				previousValue:prevValue newValue:nil];
+		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+		[self manuallyTriggerObserversForProperty_ebn:propIndexString previousValue:prevValue newValue:nil];
+		[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:prevValue newValue:nil];
 				
 		// If an 'object-following' property was being observed, and its object is now removed from the array,
 		// stop observing, since we can't observe this path anymore.
 		[self stopObservingProperty:propIndexString];
 		
 		// The count property changed; notify for it.
-		[observationProxy manuallyTriggerObserversForProperty:@"count" previousValue:
-				[NSNumber numberWithInteger:prevCount]];
+		[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 	}
 }
 
@@ -1058,7 +1010,7 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	replaceObjectAtIndex:withObject:
 	
 */
-- (void)replaceObjectAtIndex:(NSUInteger)index withObject:(id)anObject
+- (void) replaceObjectAtIndex:(NSUInteger)index withObject:(id)anObject
 {
 	id prevValue = nil;
 	if (index < [array count])
@@ -1069,11 +1021,9 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	NSString *propIndexString = [[NSString alloc] initWithFormat:@"%lu", (unsigned long) index];
 	NSString *propHashIndexString = [[NSString alloc] initWithFormat:@"#%lu", (unsigned long) index];
 	
-	[observationProxy manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
-	[observationProxy manuallyTriggerObserversForProperty:propIndexString
-			previousValue:prevValue newValue:anObject];
-	[observationProxy manuallyTriggerObserversForProperty:propHashIndexString
-			previousValue:prevValue newValue:anObject];
+	[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+	[self manuallyTriggerObserversForProperty_ebn:propIndexString previousValue:prevValue newValue:anObject];
+	[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:prevValue newValue:anObject];
 			
 	// Object-following properties need to stop observing after their object leaves the array
 	[self stopObservingProperty:propIndexString];
@@ -1090,26 +1040,27 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 - (void) stopObservingProperty:(NSString *) propertyName
 {
 	NSMapTable *observerTable = nil;
-	@synchronized(observationProxy)
+	
+	@synchronized(self)
 	{
-		observerTable = [observationProxy->_observedMethods[propertyName] copy];
+		observerTable = [self.observedMethodsDict_ebn[propertyName] copy];
 	}
 	
 	for (EBNKeypathEntryInfo *entry in observerTable)
 	{
-		EBNObservable *observedObject = entry->_blockInfo->_weakObserved;
+		NSObject *observedObject = entry->_blockInfo->_weakObserved;
 		if (observedObject)
 		{
-			[observedObject removeKeypath:entry atIndex:0];
+			[observedObject removeKeypath_ebn:entry atIndex:0];
 		}
 	}
 }
 
 /****************************************************************************************************
-	valueForKeyEBN:
+	valueForKey_ebn:
 	
 */
-- (id) valueForKeyEBN:(NSString *)key
+- (id) valueForKey_ebn:(NSString *)key
 {
 	NSInteger index = -1;
 	if ([key hasPrefix:@"#"])
@@ -1126,98 +1077,99 @@ id EBN_ForwardingTargetGuts(EBNObservableCollectionProxy *object, SEL aSelector)
 	return nil;
 }
 
-#pragma mark Observable Calls get Forwarded
+#pragma mark Observable
 
 /****************************************************************************************************
-	forwardingTargetForSelector:
+	observedMethodsDict_ebn
 	
 */
-- (id) forwardingTargetForSelector:(SEL)aSelector
+- (NSMutableDictionary *) observedMethodsDict_ebn
 {
-	id forwardTarget = EBN_ForwardingTargetGuts(self->observationProxy, aSelector);
-	if (!forwardTarget)
-		return [super forwardingTargetForSelector:aSelector];
-	
-	return forwardTarget;
+	@synchronized(self)
+	{
+		if (!_observedMethods)
+			_observedMethods = [[NSMutableDictionary alloc] init];
+	}
+
+	return _observedMethods;
 }
 
 /****************************************************************************************************
-	debugShowAllObservers
+	swizzleImplementationForSetter_ebn:
 	
+	Since we're not observing properties, we don't actually implement this method. Better said, we
+	override the default implementation to do nothing.
 */
-- (NSString *) debugShowAllObservers
++ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
 {
-	return [observationProxy debugShowAllObservers];
+	return true;
 }
 
+/****************************************************************************************************
+	createKeypath_ebn:atIndex:
+	
+	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
+	instead of iterating through each property. Collection mutators then trigger the '*' observations
+	when they get called.
+*/
+- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+{
+	NSString *propName = entryInfo->_keyPath[index];
+	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
+}
+
+/****************************************************************************************************
+	removeKeypath_ebn:atIndex:
+
+	For object-following array properties, the 'key' pointing to the property can move around as
+	objects are added/removed from the array. When we remove the keypath, we need to go find
+	where the entry has moved to.
+	
+	Also, for '*' observations, we directly remove the '*' entry from the table.
+	
+	Returns TRUE if the observation path was removed successfully.
+*/
+- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) removeEntry atIndex:(NSInteger) index
+{
+	if (index >= [removeEntry->_keyPath count])
+		return false;
+
+	NSString *propName = removeEntry->_keyPath[index];
+	
+	// For array collections, we need to handle object-following observations (like "array.4")
+	// in a special way. That special way is to look through every property to find where
+	// the observation may have moved to. And yes, by 'special' you can infer 'because the
+	// data model is designed wrong'.
+	if (isdigit([propName characterAtIndex:0]))
+	{
+		@synchronized(self)
+		{
+			for (NSString *propertyKey in [self->_observedMethods allKeys])
+			{
+				[self removeKeypath_ebn:removeEntry atIndex:index forProperty:propertyKey];
+			}
+		}
+	}
+	else if ([propName isEqualToString:@"*"])
+	{
+		// If this is a '*' observation, remove all observations via recursive calls
+		NSArray *properties = nil;
+		@synchronized(EBNObservableSynchronizationToken)
+		{
+			properties = [self.observedMethodsDict_ebn allKeys];
+		}
+		
+		for (NSString *property in properties)
+		{
+			[self removeKeypath_ebn:removeEntry atIndex:index forProperty:property];
+		}
+	}
+ 	else
+	{
+		return [self removeKeypath_ebn:removeEntry atIndex:index forProperty:propName];
+	}
+		
+	return true;
+}
 
 @end
-
-#pragma mark
-@implementation EBNObservableArchiverProxy
-
-/****************************************************************************************************
-	initWithCoder:
-	
-	NSCoding. This inits a proxy object used for encode and decode, to get around an issue with how
-	class clusters decide what type of object to encode.
-*/
-- (instancetype) initWithCoder:(NSCoder *)decoder
-{
-	if (self = [super init])
-	{
-		// 2 of these will be nil
-		self.dict = [decoder decodeObjectOfClass:[NSMutableDictionary class] forKey:@"dict"];
-		self.set = [decoder decodeObjectOfClass:[NSMutableSet class] forKey:@"set"];
-		self.array = [decoder decodeObjectOfClass:[NSMutableArray class] forKey:@"array"];
-	}
-	
-	return self;
-}
-
-/****************************************************************************************************
-	awakeAfterUsingCoder:
-	
-	NSCoding. Observation information does not get encoded or decoded as part of NSCoding; only the 
-	collection gets saved/restored.
-*/
-- (id) awakeAfterUsingCoder:(NSCoder *)decoder
-{
-	if (self.dict)
-	{
-		EBNObservableDictionary *finalDict = [[EBNObservableDictionary alloc] init];
-		[finalDict setDictionary:self.dict];
-		return finalDict;
-	} else if (self.set)
-	{
-		EBNObservableSet *finalSet = [[EBNObservableSet alloc] init];
-		[finalSet setSet:self.set];
-		return finalSet;
-	} else if (self.array)
-	{
-		EBNObservableArray *finalArray = [[EBNObservableArray alloc] init];
-		[finalArray setArray:self.array];
-		return finalArray;
-	}
-	
-	return nil;
-}
-
-/****************************************************************************************************
-	encodeWithCoder:
-	
-	NSCoding. Encodes a EBNObservable collection by encoding the composed base Cocoa collection object.
-*/
-- (void) encodeWithCoder:(NSCoder *)encoder
-{
-	if (self.dict)
-		[encoder encodeObject:self.dict forKey:@"dict"];
-	else if (self.set)
-		[encoder encodeObject:self.set forKey:@"set"];
-	else if (self.array)
-		[encoder encodeObject:self.array forKey:@"array"];
-}
-
-@end
-
-#pragma clang diagnostic pop

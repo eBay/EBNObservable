@@ -12,7 +12,7 @@
 	EBNLazyLoader is a subclass of EBNObservable.
 */
 
-#import <CoreGraphics/CoreGraphics.h>
+#import <CoreGraphics/CGGeometry.h>
 
 #import "DebugUtils.h"
 #import "EBNLazyLoader.h"
@@ -20,10 +20,6 @@
 
 template<typename T> void overrideGetterMethod(NSString *propName, Method getter,
 		Ivar getterIvar, Class classToModify);
-
-// Declares EBNLazyLoader to conform to the EBNPropertyValidityProtocol, privately
-@interface EBNLazyLoader () <EBNPropertyValidityProtocol>
-@end
 
 @implementation EBNLazyLoader
 {
@@ -45,14 +41,14 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 }
 
 /****************************************************************************************************
-	syntheticProperty:withLazyLoaderBlock:
+	syntheticProperty:withLazyLoaderMethod:
 	
 	Declares a synthetic property, with no dependents. This property will lazily compute its value;
 	you must use the invalidate methods to clear it.
 */
-- (void) syntheticProperty:(NSString *)property withLazyLoaderBlock:(EBNLazyLoaderBlock) loaderBlock
+- (void) syntheticProperty:(NSString *)property withLazyLoaderMethod:(SEL) loader
 {
-	[self wrapPropertyMethods:property customLoader:loaderBlock];
+	[self wrapPropertyMethods:property customLoader:loader];
 }
 
 /****************************************************************************************************
@@ -73,7 +69,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 		// Set up our observation
 		EBNObservation *blockInfo = NewObservationBlockImmed(self,
 		{
-			[blockSelf manuallyTriggerObserversForProperty:property previousValue:prevValue];
+			[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
 		});
 		[blockInfo setDebugString:[NSString stringWithFormat:
 				@"%p: Synthetic property \"%@\" of <%@: %p>",
@@ -95,7 +91,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	// Set up our observation
 	EBNObservation *blockInfo = NewObservationBlockImmed(self,
 	{
-		[blockSelf manuallyTriggerObserversForProperty:property previousValue:prevValue];
+		[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
 	});
 	[blockInfo setDebugString:[NSString stringWithFormat:
 			@"%p: Synthetic property \"%@\" of <%@: %p>",
@@ -133,7 +129,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 		// Set up our observation
 		EBNObservation *blockInfo = NewObservationBlockImmed(self,
 		{
-			[blockSelf manuallyTriggerObserversForProperty:property previousValue:prevValue];
+			[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
 		});
 
 #if defined(DEBUG) && DEBUG
@@ -157,20 +153,47 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (void) invalidatePropertyValue:(NSString *) property
 {
-	// Get the current cached value for the property. If the property was invalid, temporarily mark
-	// it valid. This makes the get wrapper return the value from the ivar.
+	id prevValue;
+	id newValue;
+	BOOL valueChanged = false;
+	BOOL isBeingObserved = false;
+	
+	// Is this property being observed?
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		[self->_currentlyValidProperties addObject:property];
+		if (self.observedMethodsDict_ebn[property])
+		{
+			isBeingObserved = true;
+		}
+		else
+		{
+			// If it's not being observed just remove it from the valid list.
+			[self->_currentlyValidProperties removeObject:property];
+		}
 	}
-	
-	id prevValue = [self valueForKeyPath:property];
 
-	// Mark this property invalid, and trigger anyone observing it, telling them that the property
-	// value has changed (to something not yet known).
-	[self manuallyTriggerObserversForProperty:property previousValue:prevValue];
+	if (isBeingObserved)
+	{
+		// The property can't be left invalid while being observed. Get the previous value and
+		// then immediately compute the new value by marking it invalid and re-requesting the value
+		prevValue = [self valueForKeyPath:property];
+		@synchronized(EBNObservableSynchronizationToken)
+		{
+			[self->_currentlyValidProperties removeObject:property];
+		}
+		newValue = [self valueForKeyPath:property];
+		
+		if (!((newValue == NULL && prevValue == NULL) || [newValue isEqual:prevValue]))
+			valueChanged = true;
+	}
 
-
+	// If the value changed, trigger observers
+	if (valueChanged)
+	{
+		// Mark this property invalid, and trigger anyone observing it, telling them that the property
+		// value has changed.
+		[super manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
+	}
 }
 
 /****************************************************************************************************
@@ -191,8 +214,18 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	// the null set and don't invalidate anything, which is what we want if we don't actually have lazy properties.
 	@synchronized (EBNBaseClassToShadowInfoTable)
 	{
-		Class curClass = object_getClass(self);
-		EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[curClass];
+		EBNShadowedClassInfo *info = nil;
+		
+		if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+		{
+			info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+		}
+		if (!info)
+		{
+			info = EBNBaseClassToShadowInfoTable[[self class]];
+		}
+		
+		// Get all the registered lazy properties, and intersect that with the set of newly-invalid properties.
 		if (info && info->_getters)
 			[lazyProperties setSet:info->_getters];
 		[lazyProperties intersectSet:properties];
@@ -215,7 +248,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 {
 	NSArray *validPropertyArray = nil;
 	
-	@synchronized(EBNObservableSynchronizationToken)
+	@synchronized(self)
 	{
 		validPropertyArray =  [self->_currentlyValidProperties allObjects];
 	}
@@ -227,7 +260,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 }
 
 /****************************************************************************************************
-	manuallyTriggerObserversForProperty:previousValue:
+	manuallyTriggerObserversForProperty_ebn:previousValue:
 	
 	Marks the property as invalid, and calls all of its observers.
 	
@@ -236,16 +269,16 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	in a defined way, calling this will just mark the property as invalid and then it gets 
 	recomputed lazily.
 */
-- (void) manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue
+- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue
 {
 	// I'd considered checking to see if the property was already invalid and not triggering observers
 	// in that case, but I don't think that works. If a new observer registered between the first
 	// and second invalidations it wouldn't get called.
-	@synchronized(EBNObservableSynchronizationToken)
+	@synchronized(self)
 	{
 		[self->_currentlyValidProperties removeObject:propertyName];
 	}
-	[super manuallyTriggerObserversForProperty:propertyName previousValue:prevValue];
+	[super manuallyTriggerObserversForProperty_ebn:propertyName previousValue:prevValue];
 }
 
 #pragma mark Private Methods
@@ -255,14 +288,14 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	
 	Swaps out the getter and setter for the given property.
 */
-- (BOOL) wrapPropertyMethods:(NSString *) propName customLoader:(EBNLazyLoaderBlock) loaderBlock
+- (BOOL) wrapPropertyMethods:(NSString *) propName customLoader:(SEL) loader
 {
-	if (![self swizzleImplementationForGetter:propName customLoader:loaderBlock])
+	if (![self swizzleImplementationForGetter:propName customLoader:loader])
 		return NO;
 
-	[self swizzleImplementationForSetter:propName];
+	[self swizzleImplementationForSetter_ebn:propName];
 
-	@synchronized(EBNObservableSynchronizationToken)
+	@synchronized(self)
 	{
 		// Lazily create our set of currently valid properties. At the start, none of the lazily loaded
 		// properties are going to be valid.
@@ -276,19 +309,29 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 }
 
 /****************************************************************************************************
-	markPropertyValid:
+	markPropertyValid_ebn:
 	
 	Internal method to mark a property as being cached in its ivar, so that future accesses to 
 	it will return the cached value.
 */
-- (void) markPropertyValid:(NSString *) property
+- (void) markPropertyValid_ebn:(NSString *) property
 {
 	// This just sanity checks that the property string is actually 1) a property, and 2) set up
 	// to be lazily loaded. As it happens, everything works fine without this check, even if you
 	// do call it with non-properties. Not that you should do that.
 	@synchronized (EBNBaseClassToShadowInfoTable)
 	{
-		EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[object_getClass(self)];
+		EBNShadowedClassInfo *info = nil;
+		
+		if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+		{
+			info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+		}
+		if (!info)
+		{
+			info = EBNBaseClassToShadowInfoTable[[self class]];
+		}
+		
 		if (!info || ![info->_getters containsObject:property])
 		{
 			return;
@@ -296,7 +339,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	}
 
 	// Mark it valid
-	@synchronized(EBNObservableSynchronizationToken)
+	@synchronized(self)
 	{
 		[self->_currentlyValidProperties addObject:property];
 	}
@@ -313,14 +356,14 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideGetterMethod<>() to create a new method and swizzle it in.
 */
-- (BOOL) swizzleImplementationForGetter:(NSString *) propertyName customLoader:(EBNLazyLoaderBlock) loaderBlock
+- (BOOL) swizzleImplementationForGetter:(NSString *) propertyName customLoader:(SEL) loader
 {
-	Class classToModify = [self prepareToObserveProperty:propertyName isSetter:NO];
+	Class classToModify = [self prepareToObserveProperty_ebn:propertyName isSetter:NO];
 	if (!classToModify)
 		return YES;
 
 	// Get the method selector for the getter on this property
-	SEL getterSelector = [[self class] selectorForPropertyGetter:propertyName];
+	SEL getterSelector = [[self class] selectorForPropertyGetter_ebn:propertyName];
 	EBAssert(getterSelector, @"Couldn't find getter method for property %@ in object %@", propertyName, self);
 	if (!getterSelector)
 		return NO;
@@ -354,40 +397,40 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	switch (typeOfGetter[0])
 	{
 	case _C_CHR:
-		overrideGetterMethod<char>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<char>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_UCHR:
-		overrideGetterMethod<unsigned char>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<unsigned char>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_SHT:
-		overrideGetterMethod<short>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<short>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_USHT:
-		overrideGetterMethod<unsigned short>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<unsigned short>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_INT:
-		overrideGetterMethod<int>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<int>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_UINT:
-		overrideGetterMethod<unsigned int>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<unsigned int>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_LNG:
-		overrideGetterMethod<long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<long>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_ULNG:
-		overrideGetterMethod<unsigned long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<unsigned long>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_LNG_LNG:
-		overrideGetterMethod<long long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<long long>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_ULNG_LNG:
-		overrideGetterMethod<unsigned long long>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<unsigned long long>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_FLT:
-		overrideGetterMethod<float>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<float>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_DBL:
-		overrideGetterMethod<double>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<double>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_BFLD:
 		// Pretty sure this can't happen, as bitfields can't be top-level and are only found inside structs/unions
@@ -396,34 +439,34 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	
 		// From "Objective-C Runtime Programming Guide: Type Encodings" -- 'B' is "A C++ bool or a C99 _Bool"
 	case _C_BOOL:
-		overrideGetterMethod<bool>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<bool>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_PTR:
 	case _C_CHARPTR:
 	case _C_ATOM:		// Apparently never generated? Only docs I can find say treat same as charptr
 	case _C_ARY_B:
-		overrideGetterMethod<void *>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<void *>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	
 	case _C_ID:
-		overrideGetterMethod<id>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<id>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_CLASS:
-		overrideGetterMethod<Class>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<Class>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 	case _C_SEL:
-		overrideGetterMethod<SEL>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+		overrideGetterMethod<SEL>(propertyName, getterMethod, getterIvar, classToModify, loader);
 	break;
 
 	case _C_STRUCT_B:
 		if (!strncmp(typeOfGetter, @encode(NSRange), 32))
-			overrideGetterMethod<NSRange>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+			overrideGetterMethod<NSRange>(propertyName, getterMethod, getterIvar, classToModify, loader);
 		else if (!strncmp(typeOfGetter, @encode(CGPoint), 32))
-			overrideGetterMethod<CGPoint>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+			overrideGetterMethod<CGPoint>(propertyName, getterMethod, getterIvar, classToModify, loader);
 		else if (!strncmp(typeOfGetter, @encode(CGRect), 32))
-			overrideGetterMethod<CGRect>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+			overrideGetterMethod<CGRect>(propertyName, getterMethod, getterIvar, classToModify, loader);
 		else if (!strncmp(typeOfGetter, @encode(CGSize), 32))
-			overrideGetterMethod<CGSize>(propertyName, getterMethod, getterIvar, classToModify, loaderBlock);
+			overrideGetterMethod<CGSize>(propertyName, getterMethod, getterIvar, classToModify, loader);
 		else
 			EBAssert(NO, @"Observable does not have a way to override the setter for %@.", propertyName);
 	break;
@@ -468,6 +511,8 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	validity introspection that invalidates/forces caching in some weird way you are probably 
 	doing it wrong.
 	
+	This method purposefully doesn't @synchronize because it could cause a debugger deadlock.
+	
 	Returns the set of synthetic properties whose values are currently wrong.
 
 	To use, type in the debugger:
@@ -476,8 +521,17 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 - (NSSet *) debug_invalidProperties
 {
 	NSMutableSet *invalidPropertySet = [[NSMutableSet alloc] init];
+	EBNShadowedClassInfo *info = nil;
+		
+	if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+	{
+		info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+	}
+	if (!info)
+	{
+		info = EBNBaseClassToShadowInfoTable[[self class]];
+	}
 	
-	EBNShadowedClassInfo *info = EBNShadowedClassToInfoTable[object_getClass(self)];
 	if (info)
 	{
 		[invalidPropertySet unionSet:info->_getters];
@@ -528,41 +582,75 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	This is the general case for the template; note the template specializations below.
 */
 template<typename T> void overrideGetterMethod(NSString *propName, Method getter,
-		Ivar getterIvar, Class classToModify, EBNLazyLoaderBlock loaderBlock)
+		Ivar getterIvar, Class classToModify, SEL loader)
 {
 	// All of these local variables get copied into the setAndObserve block
 	T (*originalGetter)(id, SEL) = (T (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	ptrdiff_t ivarOffset = ivar_getOffset(getterIvar);
 	
-	__block BOOL insideLoaderBlock = NO;
+	NSMutableSet *threadsPerformingLoads = nil;
+	if (loader)
+	{
+		threadsPerformingLoads = [[NSMutableSet alloc] init];
+	}
 
 	// This is what gets run when the getter method gets called.
 	T (^getLazily)(EBNLazyLoader *) = ^ T (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(EBNObservableSynchronizationToken)
+		// NOTE: Read this fn's comments. This doesn't get called for object properties.
+		// And yes--we need all 3 casts.
+		T *ivarPtr = (T *) (((char *) ((__bridge void *) blockSelf)) + ivarOffset);
+		BOOL propertyIsValid = false;
+		BOOL mustPerformLoad = false;
+		
+		// Check whether the property is valid.
+		@synchronized(blockSelf)
 		{
-			// NOTE: Read this fn's comments. This doesn't get called for object properties.
-			// And yes--we need all 3 casts.
-			T *ivarPtr = (T *) (((char *) ((__bridge void *) blockSelf)) + ivarOffset);
-			if ([blockSelf->_currentlyValidProperties containsObject:propName])
+			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
-				return *ivarPtr;
+				[threadsPerformingLoads addObject:[NSThread currentThread]];
+				mustPerformLoad	= true;
 			}
-			else
+		}
+		
+		if (propertyIsValid)
+		{
+			return *ivarPtr;
+		}
+		else
+		{
+			// The optional loader method is called with a property name and is responsible for
+			// 'loading' the value of that property--generally making it so the getter will
+			// return the right value. Useful for cases where properties are actually stored in
+			// dictionaries and fronted with property names.
+			if (mustPerformLoad)
 			{
-				if (loaderBlock && !insideLoaderBlock)
+				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+				// importantly how ARC is supposed to treat the the returned value's ownership state (if
+				// it returns an object at all), ARC will warn that performSelector might leak here.
+				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+				#pragma clang diagnostic push
+				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+				[blockSelf performSelector:loader withObject:propName];
+				#pragma clang diagnostic pop
+				
+				@synchronized(blockSelf)
 				{
-					insideLoaderBlock = YES;
-					loaderBlock(blockSelf);
-					insideLoaderBlock = NO;
+					[threadsPerformingLoads removeObject:[NSThread currentThread]];
 				}
-
-				T value = (originalGetter)(blockSelf, getterSEL);
-				*ivarPtr = value;
-				[blockSelf->_currentlyValidProperties addObject:propName];
-				return value;
 			}
+
+			// Call the original getter to get the value of the property and save that value
+			// in the ivar. Then we need to mark the property as valid.
+			T value = (originalGetter)(blockSelf, getterSEL);
+			*ivarPtr = value;
+			@synchronized(blockSelf)
+			{
+				[blockSelf->_currentlyValidProperties addObject:propName];
+			}
+			return value;
 		}
 	};
 
@@ -584,37 +672,71 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	value in the ivar.
 */
 template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar getterIvar,
-		Class classToModify, EBNLazyLoaderBlock loaderBlock)
+		Class classToModify, SEL loader)
 {
 	// All of these local variables get copied into the setAndObserve block
 	id (*originalGetter)(id, SEL) = (id (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	
-	__block BOOL insideLoaderBlock = NO;
+	NSMutableSet *threadsPerformingLoads = nil;
+	if (loader)
+	{
+		threadsPerformingLoads = [[NSMutableSet alloc] init];
+	}
 
 	// This is what gets run when the getter method gets called.
 	id (^getLazily)(EBNLazyLoader *) = ^ id (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(EBNObservableSynchronizationToken)
+		BOOL propertyIsValid = false;
+		BOOL mustPerformLoad = false;
+		
+		// Check whether the property is valid.
+		@synchronized(blockSelf)
 		{
-			if ([blockSelf->_currentlyValidProperties containsObject:propName])
+			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
-				return object_getIvar(blockSelf, getterIvar);
+				[threadsPerformingLoads addObject:[NSThread currentThread]];
+				mustPerformLoad	= true;
 			}
-			else
+		}
+		
+		if (propertyIsValid)
+		{
+			return object_getIvar(blockSelf, getterIvar);
+		}
+		else
+		{
+			// The optional loader method is called with a property name and is responsible for
+			// 'loading' the value of that property--generally making it so the getter will
+			// return the right value. Useful for cases where properties are actually stored in
+			// dictionaries and fronted with property names.
+			if (mustPerformLoad)
 			{
-				if (loaderBlock && !insideLoaderBlock)
-				{
-					insideLoaderBlock = YES;
-					loaderBlock(blockSelf);
-					insideLoaderBlock = NO;
-				}
+				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+				// importantly how ARC is supposed to treat the the returned value's ownership state (if
+				// it returns an object at all), ARC will warn that performSelector might leak here.
+				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+				#pragma clang diagnostic push
+				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+				[blockSelf performSelector:loader withObject:propName];
+				#pragma clang diagnostic pop
 
-				id value = (originalGetter)(blockSelf, getterSEL);
-				object_setIvar(blockSelf, getterIvar, value);
-				[blockSelf->_currentlyValidProperties addObject:propName];
-				return value;
+				@synchronized(blockSelf)
+				{
+					[threadsPerformingLoads removeObject:[NSThread currentThread]];
+				}
 			}
+			
+			// Call the original getter to get the value of the property and save that value
+			// in the ivar. Then we need to mark the property as valid.
+			id value = (originalGetter)(blockSelf, getterSEL);
+			object_setIvar(blockSelf, getterIvar, value);
+			@synchronized(blockSelf)
+			{
+				[blockSelf->_currentlyValidProperties addObject:propName];
+			}
+			return value;
 		}
 	};
 
@@ -636,37 +758,71 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 	value in the ivar.
 */
 template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
-		Ivar getterIvar, Class classToModify, EBNLazyLoaderBlock loaderBlock)
+		Ivar getterIvar, Class classToModify, SEL loader)
 {
 	// All of these local variables get copied into the setAndObserve block
 	Class (*originalGetter)(id, SEL) = (Class (*)(id, SEL)) method_getImplementation(getter);
 	SEL getterSEL = method_getName(getter);
 	
-	__block BOOL insideLoaderBlock = NO;
+	NSMutableSet *threadsPerformingLoads = nil;
+	if (loader)
+	{
+		threadsPerformingLoads = [[NSMutableSet alloc] init];
+	}
 
 	// This is what gets run when the getter method gets called.
 	Class (^getLazily)(EBNLazyLoader *) = ^ Class (EBNLazyLoader *blockSelf)
 	{
-		@synchronized(EBNObservableSynchronizationToken)
+		BOOL propertyIsValid = false;
+		BOOL mustPerformLoad = false;
+		
+		// Check whether the property is valid.
+		@synchronized(blockSelf)
 		{
-			if ([blockSelf->_currentlyValidProperties containsObject:propName])
+			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
-				return object_getIvar(blockSelf, getterIvar);
+				[threadsPerformingLoads addObject:[NSThread currentThread]];
+				mustPerformLoad	= true;
 			}
-			else
+		}
+		
+		if (propertyIsValid)
+		{
+			return object_getIvar(blockSelf, getterIvar);
+		}
+		else
+		{
+			// The optional loader method is called with a property name and is responsible for
+			// 'loading' the value of that property--generally making it so the getter will
+			// return the right value. Useful for cases where properties are actually stored in
+			// dictionaries and fronted with property names.
+			if (mustPerformLoad)
 			{
-				if (loaderBlock && !insideLoaderBlock)
-				{
-					insideLoaderBlock = YES;
-					loaderBlock(blockSelf);
-					insideLoaderBlock = NO;
-				}
+				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+				// importantly how ARC is supposed to treat the the returned value's ownership state (if
+				// it returns an object at all), ARC will warn that performSelector might leak here.
+				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+				#pragma clang diagnostic push
+				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+				[blockSelf performSelector:loader withObject:propName];
+				#pragma clang diagnostic pop
 
-				id value = (originalGetter)(blockSelf, getterSEL);
-				object_setIvar(blockSelf, getterIvar, value);
-				[blockSelf->_currentlyValidProperties addObject:propName];
-				return value;
+				@synchronized(blockSelf)
+				{
+					[threadsPerformingLoads removeObject:[NSThread currentThread]];
+				}
 			}
+
+			// Call the original getter to get the value of the property and save that value
+			// in the ivar. Then we need to mark the property as valid.
+			id value = (originalGetter)(blockSelf, getterSEL);
+			object_setIvar(blockSelf, getterIvar, value);
+			@synchronized(blockSelf)
+			{
+				[blockSelf->_currentlyValidProperties addObject:propName];
+			}
+			return value;
 		}
 	};
 

@@ -21,7 +21,7 @@
 		EA5B6C6517D08FA60077F905 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = EA5B6C6317D08FA60077F905 /* InfoPlist.strings */; };
 		EA5B6C6717D08FA60077F905 /* ObservableTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA5B6C6617D08FA60077F905 /* ObservableTests.m */; };
 		EA5DE0D919238D900088FD13 /* ObservableDictionaryTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA5DE0D819238D900088FD13 /* ObservableDictionaryTests.m */; };
-		EA63E94F198AFAFE0067C917 /* ModelObject1.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E948198AFAFD0067C917 /* ModelObject1.m */; };
+		EA63E94F198AFAFE0067C917 /* ModelObjects.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E948198AFAFD0067C917 /* ModelObjects.m */; };
 		EA63E950198AFAFE0067C917 /* SubViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E94A198AFAFD0067C917 /* SubViewController.m */; };
 		EA63E951198AFAFE0067C917 /* SubViewController.xib in Resources */ = {isa = PBXBuildFile; fileRef = EA63E94B198AFAFD0067C917 /* SubViewController.xib */; };
 		EA63E952198AFAFE0067C917 /* TestWindowViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E94D198AFAFE0067C917 /* TestWindowViewController.m */; };
@@ -69,8 +69,8 @@
 		EA5B6C6417D08FA60077F905 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		EA5B6C6617D08FA60077F905 /* ObservableTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ObservableTests.m; sourceTree = "<group>"; };
 		EA5DE0D819238D900088FD13 /* ObservableDictionaryTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = ObservableDictionaryTests.m; path = ObservableTests/ObservableDictionaryTests.m; sourceTree = SOURCE_ROOT; };
-		EA63E947198AFAFD0067C917 /* ModelObject1.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ModelObject1.h; sourceTree = "<group>"; };
-		EA63E948198AFAFD0067C917 /* ModelObject1.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ModelObject1.m; sourceTree = "<group>"; };
+		EA63E947198AFAFD0067C917 /* ModelObjects.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ModelObjects.h; sourceTree = "<group>"; };
+		EA63E948198AFAFD0067C917 /* ModelObjects.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ModelObjects.m; sourceTree = "<group>"; };
 		EA63E949198AFAFD0067C917 /* SubViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SubViewController.h; sourceTree = "<group>"; };
 		EA63E94A198AFAFD0067C917 /* SubViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SubViewController.m; sourceTree = "<group>"; };
 		EA63E94B198AFAFD0067C917 /* SubViewController.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = SubViewController.xib; sourceTree = "<group>"; };
@@ -197,8 +197,8 @@
 		EA63E946198AFAFD0067C917 /* Test UI */ = {
 			isa = PBXGroup;
 			children = (
-				EA63E947198AFAFD0067C917 /* ModelObject1.h */,
-				EA63E948198AFAFD0067C917 /* ModelObject1.m */,
+				EA63E947198AFAFD0067C917 /* ModelObjects.h */,
+				EA63E948198AFAFD0067C917 /* ModelObjects.m */,
 				EA63E949198AFAFD0067C917 /* SubViewController.h */,
 				EA63E94A198AFAFD0067C917 /* SubViewController.m */,
 				EA63E94B198AFAFD0067C917 /* SubViewController.xib */,
@@ -326,7 +326,7 @@
 			files = (
 				EA186E70193D8D97008A0A7B /* EBNLazyLoader.mm in Sources */,
 				EA186E73193D8D97008A0A7B /* EBNObservation.m in Sources */,
-				EA63E94F198AFAFE0067C917 /* ModelObject1.m in Sources */,
+				EA63E94F198AFAFE0067C917 /* ModelObjects.m in Sources */,
 				EA63E950198AFAFE0067C917 /* SubViewController.m in Sources */,
 				EA63E952198AFAFE0067C917 /* TestWindowViewController.m in Sources */,
 				EAFF2B3C1903D0CA0022C704 /* main.m in Sources */,

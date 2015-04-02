@@ -89,11 +89,11 @@
 */
 - (bool) observe:(NSString *) keyPath
 {
-	EBNObservable *observedObj = self->_weakObserved;
+	NSObject *observedObj = self->_weakObserved;
 	id strongObserver = self->_weakObserver;
 	if (observedObj && strongObserver)
 	{
-		return [observedObj observe:keyPath using:self];
+		return [observedObj observe_ebn:keyPath using:self];
 	}
 	return false;
 }
@@ -120,7 +120,7 @@
 */
 - (bool) execute
 {
-	EBNObservable *blockSelf = self->_weakObserved;
+	NSObject *blockSelf = self->_weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
@@ -132,7 +132,7 @@
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
-		[blockSelf reapBlocks];
+		[blockSelf reapBlocks_ebn];
 		return false;
 	}
 	
@@ -148,7 +148,7 @@
 */
 - (bool) executeWithPreviousValue:(id) prevValue
 {
-	EBNObservable *blockSelf = self->_weakObserved;
+	NSObject *blockSelf = self->_weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
@@ -160,7 +160,7 @@
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
-		[blockSelf reapBlocks];
+		[blockSelf reapBlocks_ebn];
 		return false;
 	}
 	

@@ -25,7 +25,7 @@ extern NSMutableDictionary		*EBNBaseClassToShadowInfoTable;
 */
 extern NSMutableSet				*EBNObservableSynchronizationToken;
 
-	// Used to disable this log warning when performance testing
+	/// Used to disable this log warning when performance testing
 extern BOOL ebn_WarnOnMultipleObservations;
 
 /**
@@ -50,13 +50,19 @@ extern BOOL ebn_WarnOnMultipleObservations;
 @interface EBNShadowedClassInfo : NSObject
 {
 @public
-	Class					_baseClass;
-	Class					_shadowClass;
-	bool					_isAppleKVOClass;
-	NSMutableSet			*_getters;
-	NSMutableSet 			*_setters;
+	Class					_baseClass;			// Objects originally of this class...
+	Class					_shadowClass;		// ...get isa-swizzled to this class...
+	BOOL					_isAppleKVOClass;	// ...unless Apple's KVO has already isa-swizzled. In that case,
+												// we method-swizzle methods in the Apple KVO-created subclass.
+
+		// Note that these contain property names, NOT method names!
+	NSMutableSet			*_getters;			// All the properties that have had their getters wrapped.
+	NSMutableSet 			*_setters;			// All the properties that have had their setters wrapped.
 }
+
+	/// An internal initializer used to create EBNShadowedClassInfo objects
 - (instancetype) initWithBaseClass:(Class) baseClass shadowClass:(Class) newShadowClass;
+
 @end
 
 /**
@@ -66,8 +72,8 @@ extern BOOL ebn_WarnOnMultipleObservations;
 @protocol EBNObservable_Custom_Selectors
 
 @optional
-- (void) EBN_original_dealloc;
-- (EBNShadowedClassInfo *) getShadowClassInfo_EBN;
+- (void) ebn_original_dealloc;
+- (EBNShadowedClassInfo *) ebn_shadowClassInfo;
 
 @end
 
@@ -78,7 +84,7 @@ extern BOOL ebn_WarnOnMultipleObservations;
 	definition itself is private to Observable, it's still private.
 	
 	These are all methods that the Observable code calls on itself to get things done, but which
-	shouldn't be called from outside Observable. All these methods have the _ebn suffix to 
+	shouldn't be called from outside Observable. All these methods have the ebn_ prefix to 
 	reduce the chance they'll cause method namespace collisions.
 */
 @interface NSObject (EBNObservable_Internal)
@@ -91,19 +97,31 @@ extern BOOL ebn_WarnOnMultipleObservations;
 
 	@return A dictionary containing sub-dictionaries for each method which has an active observation.
  */
-- (NSMutableDictionary *) observedMethodsDict_ebn;
+- (NSMutableDictionary *) ebn_observedMethodsDict;
 
 	// When setting up an observation, or when an object in the middle of a keypath changes value, these
 	// methods are used to set up observations on each object in the key path except for the endoint property.
 	// That is, for an observation rooted on object A with the keypath "B.C.D", A will set up its local observation
 	// on property B, and then call createKeypath: on object B. B will then do the same, calling object C.
-- (bool) observe_ebn:(NSString *) keyPathString using:(EBNObservation *) blockInfo;
-- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
-- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
-- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (BOOL) ebn_observe:(NSString *) keyPathString using:(EBNObservation *) blockInfo;
+- (BOOL) ebn_createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
+- (BOOL) ebn_removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index;
+- (BOOL) ebn_createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName;
-- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (BOOL) ebn_removeKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 		forProperty:(NSString *) propName;
+
+/**
+	valueForKey: does odd things with collections. This method works like valueForKey, except it
+	gets overridden by the observable collection classes so that EBNObservableArray can work with 
+	keypaths like "array.5".
+
+	@param key The key to evaluate
+
+	@return The value for the given key, as an objecgt
+*/
+- (id) ebn_valueForKey:(NSString *)key;
+
 
 /**
 	The Execute methods in EBNObservation can cause reaping, so Observable's reapBlocks is exposed 
@@ -111,15 +129,30 @@ extern BOOL ebn_WarnOnMultipleObservations;
 
 	@return number of dead observations that got removed.
  */
-- (int) reapBlocks_ebn;
+- (int) ebn_reapBlocks;
+
+/**
+	Marks the given property as being valid. LazyLoader uses this to keep track of which synthetic
+	properties have valid values. This method does not actually cause the synthetic property to compute its value.
+
+	@param property The property to mark as valid.
+ */
+- (void) ebn_markPropertyValid:(NSString *) property;
+
+
+/**
+	Forces the given (synthetic) property getter to evaluate its value. The method does this by
+	calling the getter on the property.
+
+	@param property The property to force to become valid.
+*/
+- (void) ebn_forcePropertyValid:(NSString *) property;
+
 
 	// Don't call these methods unless you have a good reason.
-- (bool) swizzleImplementationForSetter_ebn:(NSString *) propName;
-+ (SEL) selectorForPropertyGetter_ebn:(NSString *) propertyName;
-- (Class) prepareToObserveProperty_ebn:(NSString *)propertyName isSetter:(bool) isSetter;
-
-	// This is an optional method definied by LazyLoader but called by Observable. Downcasting at its finest.
-- (void) markPropertyValid_ebn:(NSString *) property;
+- (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName;
++ (SEL) ebn_selectorForPropertyGetter:(NSString *) propertyName;
+- (Class) ebn_prepareToObserveProperty:(NSString *)propertyName isSetter:(BOOL) isSetter;
 
 @end
 

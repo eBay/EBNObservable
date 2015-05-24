@@ -5,8 +5,21 @@
 	Created by Chall Fry on 4/29/14.
 	Copyright (c) 2013-2014 eBay Software Foundation.
 	
-	LazyLoader is a class that makes it easier to create synthetic properties whose value is calculated
-	from other property values. You declare a property to be synthetic once (usually in the init method);
+	EBNLazyLoader is a category on NSObject that provides the ability for creating synthetic properties.
+
+	Synthetic properties use lazy evaluation--they only compute their value when requested.
+	They also use caching--once they compute their value, that value is cached.
+	A synthetic property has a concept of whether it is in a valid or invalid state, separate from whether
+			its value is 0 or NULL.
+	There are methods to invalidate a synthetic properties' value--meaning it will be recomputed next time requested.
+	Synthetic properties can optionally declare themselves dependent on the values of other properties;
+			meaning they are automatically invalidated when the property they take a value from changes.
+	Synthetic properties interoperate correctly with observations.
+	Synthetic properties can chain off of other synthetic properties.
+
+	
+	
+	To use, you declare a property to be synthetic once (usually in the init method);
 	and write a normal getter method that calculates the property's value. That property will then
 	evaluate the getter once, and then cache the result until one of the invalidation methods is called
 	to force the cached result to be discarded.
@@ -15,6 +28,22 @@
 	This automates the invalidation of those properties whenever the source properties change value.
 	The classic example of this is making a fullName property recalculate its value when firstName or lastName
 	change value.
+	
+	So in your init method:
+		 SyntheticProperty(fullName);
+	and you have made fullName into a synthetic property that only calls the getter to compute the property
+	value when the property's cached value is invalid. Use the Invalidate methods to declare when
+	properties become invalid.
+	
+	Or, also in your init method:
+		SyntheticProperty(fullName, firstName, lastName);
+	and you have made fullName into a synthetic property whose value depends on firstName and lastName.
+	FullName will automatically invalidate itself (and recompute the next time its value is requested) when
+	either firstName or lastName changes. No need to call an Invalidate method (although you still can do so).
+	
+	Generally, you should only consider using LazyLoader in cases where you have a custom getter, and the
+	more computationally-intensive the getter, the better.
+	
 */
 
 #import "EBNObservable.h"
@@ -55,9 +84,9 @@
 
 
 
-#pragma mark EBNLazyLoader class
+#pragma mark EBNLazyLoader Category
 
-@interface EBNLazyLoader : EBNObservable
+@interface NSObject (EBNLazyLoader)
 
 /**
 	Declares a synthetic property. Must be a property of the receiver. This property will cache the result
@@ -144,7 +173,7 @@
 
 @end
 
-@interface EBNLazyLoader (debugging)
+@interface NSObject (EBNLazyLoaderDebugging)
 
 /**
 	For debugging only, shows the set of currently valid properties. Don't use this for production code.
@@ -174,12 +203,18 @@
 		po [<object> debug_forceAllPropertiesValid]
 	
  */
-- (void) 	debug_forceAllPropertiesValid;
+- (void) debug_forceAllPropertiesValid;
 
 @end
 
 
-
+/**
+	In previous incarnations, LazyLoader was a base class for any class that had LazyLoadable properties.
+	The code base is now structured as a category on NSObject; this class is deprecated and is 
+	here for compatibility.
+*/
+@interface EBNLazyLoader : NSObject
+@end
 
 
 

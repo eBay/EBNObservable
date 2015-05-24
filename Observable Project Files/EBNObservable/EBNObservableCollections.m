@@ -9,6 +9,8 @@
 #import "DebugUtils.h"
 #import "EBNObservableCollections.h"
 
+//
+
 	// This is a proxy object that we create during archiving, because archiving custom subclasses of
 	// class clusters doesn't seem to work right--the cluster seems to override the type of object that
 	// gets archived.
@@ -31,9 +33,9 @@
 	if (self = [super init])
 	{
 		// 2 of these will be nil
-		self.dict = [decoder decodeObjectOfClass:[NSMutableDictionary class] forKey:@"dict"];
-		self.set = [decoder decodeObjectOfClass:[NSMutableSet class] forKey:@"set"];
-		self.array = [decoder decodeObjectOfClass:[NSMutableArray class] forKey:@"array"];
+		_dict = [decoder decodeObjectOfClass:[NSMutableDictionary class] forKey:@"dict"];
+		_set = [decoder decodeObjectOfClass:[NSMutableSet class] forKey:@"set"];
+		_array = [decoder decodeObjectOfClass:[NSMutableArray class] forKey:@"array"];
 	}
 	
 	return self;
@@ -193,7 +195,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->_dict];
+	NSDictionary *newDict = [[NSDictionary allocWithZone:zone] initWithDictionary:self->_dict];
 	return newDict;
 }
 
@@ -258,13 +260,13 @@
 		if ((previousValue == nil) || ![newValue isEqual:previousValue])
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[self manuallyTriggerObserversForProperty_ebn:aKeyString previousValue:previousValue newValue:newValue];
-			[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+			[self ebn_manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:newValue];
+			[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
@@ -288,23 +290,23 @@
 		if (previousValue != nil)
 		{
 			NSString *aKeyString = (NSString *) aKey;
-			[self manuallyTriggerObserversForProperty_ebn:aKeyString previousValue:previousValue newValue:nil];
-			[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+			[self ebn_manuallyTriggerObserversForProperty:aKeyString previousValue:previousValue newValue:nil];
+			[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 		}
 	}
 	
 	// The count property may have changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
 }
 
 #pragma mark Keypaths
 
 /****************************************************************************************************
-	valueForKey_ebn:
+	ebn_valueForKey:
 	
 */
-- (id) valueForKey_ebn:(NSString *)key
+- (id) ebn_valueForKey:(NSString *)key
 {
 	return [self objectForKey:key];
 }
@@ -312,42 +314,44 @@
 #pragma mark Observable
 
 /****************************************************************************************************
-	observedMethodsDict_ebn
+	ebn_observedMethodsDict
 	
+	For Observable collections, this just returns the ivar for the observed methods table.
+	For other classes, this gets the observed methods dict out of an associated object.
+	
+	The caller of this method must be inside a @synchronized(EBNObservableSynchronizationToken), and must
+	remain inside that sync while using the dictionary.
 */
-- (NSMutableDictionary *) observedMethodsDict_ebn
+- (NSMutableDictionary *) ebn_observedMethodsDict
 {
-	@synchronized(self)
-	{
-		if (!_observedMethods)
-			_observedMethods = [[NSMutableDictionary alloc] init];
-	}
+	if (!_observedMethods)
+		_observedMethods = [[NSMutableDictionary alloc] init];
 
 	return _observedMethods;
 }
 
 /****************************************************************************************************
-	swizzleImplementationForSetter_ebn:
+	ebn_swizzleImplementationForSetter:
 	
 	Since we're not observing properties, we don't actually implement this method. Better said, we
 	override the default implementation to do nothing.
 */
-+ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
++ (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName
 {
-	return true;
+	return YES;
 }
 
 /****************************************************************************************************
-	createKeypath_ebn:atIndex:
+	ebn_createKeypath:atIndex:
 	
 	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
 	instead of iterating through each property. Collection mutators then trigger the '*' observations
 	when they get called.
 */
-- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (BOOL) ebn_createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	NSString *propName = entryInfo->_keyPath[index];
-	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
+	return [self ebn_createKeypath:entryInfo atIndex:index forProperty:propName];
 }
 
 @end
@@ -460,7 +464,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	EBNObservableSet *newSet = [[EBNObservableSet allocWithZone:zone] initWithSet:self->set];
+	NSSet *newSet = [[NSSet allocWithZone:zone] initWithSet:self->set];
 	return newSet;
 }
 
@@ -517,13 +521,13 @@
 	if (previousValue == nil)
 	{
 		NSString *keyForNewValue = [EBNObservableSet keyForObject:object];
-		[self manuallyTriggerObserversForProperty_ebn:keyForNewValue previousValue:previousValue
+		[self ebn_manuallyTriggerObserversForProperty:keyForNewValue previousValue:previousValue
 				newValue:object];
-		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+		[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 	}
 	
 	// The count property may have changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[set count]]];
 }
 
@@ -541,13 +545,13 @@
 	if (previousValue)
 	{
 		NSString *keyForPrevValue = [EBNObservableSet keyForObject:previousValue];
-		[self manuallyTriggerObserversForProperty_ebn:keyForPrevValue previousValue:previousValue
+		[self ebn_manuallyTriggerObserversForProperty:keyForPrevValue previousValue:previousValue
 				newValue:nil];
-		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+		[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 	}
 	
 	// The count property may have changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[set count]]];
 }
 
@@ -592,10 +596,10 @@
 }
 
 /****************************************************************************************************
-	valueForKey_ebn:
+	ebn_valueForKey:
 	
 */
-- (id) valueForKey_ebn:(NSString *)key
+- (id) ebn_valueForKey:(NSString *)key
 {
 	return [self objectForKey:key];
 }
@@ -603,42 +607,45 @@
 #pragma mark Observable
 
 /****************************************************************************************************
-	observedMethodsDict_ebn
+	ebn_observedMethodsDict
 	
+	For Observable collections, this just returns the ivar for the observed methods table.
+	For other classes, this gets the observed methods dict out of an associated object.
+	
+	The caller of this method must be inside a @synchronized(EBNObservableSynchronizationToken), and must
+	remain inside that sync while using the dictionary.
 */
-- (NSMutableDictionary *) observedMethodsDict_ebn
+
+- (NSMutableDictionary *) ebn_observedMethodsDict
 {
-	@synchronized(self)
-	{
-		if (!_observedMethods)
-			_observedMethods = [[NSMutableDictionary alloc] init];
-	}
+	if (!_observedMethods)
+		_observedMethods = [[NSMutableDictionary alloc] init];
 
 	return _observedMethods;
 }
 
 /****************************************************************************************************
-	swizzleImplementationForSetter_ebn:
+	ebn_swizzleImplementationForSetter:
 	
 	Since we're not observing properties, we don't actually implement this method. Better said, we
 	override the default implementation to do nothing.
 */
-+ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
++ (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName
 {
-	return true;
+	return YES;
 }
 
 /****************************************************************************************************
-	createKeypath_ebn:atIndex:
+	ebn_createKeypath:atIndex:
 	
 	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
 	instead of iterating through each property. Collection mutators then trigger the '*' observations
 	when they get called.
 */
-- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (BOOL) ebn_createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	NSString *propName = entryInfo->_keyPath[index];
-	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
+	return [self ebn_createKeypath:entryInfo atIndex:index forProperty:propName];
 }
 
 @end
@@ -740,7 +747,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	EBNObservableArray *newArray = [[EBNObservableArray allocWithZone:zone] initWithArray:self->array];
+	NSArray *newArray = [[NSArray allocWithZone:zone] initWithArray:self->array];
 	return newArray;
 }
 
@@ -794,9 +801,9 @@
 		
 	NSMutableArray *adjustObservations = [[NSMutableArray alloc] init];
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in self.observedMethodsDict_ebn)
+		for (NSString *propertyKey in self.ebn_observedMethodsDict)
 		{
 			// array.#4 observes the object at index 4, and follows the index
 			if ([propertyKey hasPrefix:@"#"])
@@ -808,14 +815,14 @@
 					if (observedIndex + 1 < [array count])
 						prevValueForIndex = array[observedIndex + 1];
 					id newValueForIndex = array[observedIndex];
-					[self manuallyTriggerObserversForProperty_ebn:propertyKey previousValue:prevValueForIndex
+					[self ebn_manuallyTriggerObserversForProperty:propertyKey previousValue:prevValueForIndex
 							newValue:newValueForIndex];
 				}
 
 			} else if ([propertyKey isEqualToString:@"*"])
 			{
 				// If we have observations on '*', run them here
-				[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+				[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 			} else
 			{
 				// array.4 observes the object at index 4 *at the time observation starts*, and follows that object
@@ -844,14 +851,14 @@
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] + 1];
-			NSMapTable *observerTable = self.observedMethodsDict_ebn[moveFromPropKey];
-			[self.observedMethodsDict_ebn removeObjectForKey:moveFromPropKey];
-			[self.observedMethodsDict_ebn setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = self.ebn_observedMethodsDict[moveFromPropKey];
+			[self.ebn_observedMethodsDict removeObjectForKey:moveFromPropKey];
+			[self.ebn_observedMethodsDict setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
 	// The count property changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 }
 
 /****************************************************************************************************
@@ -869,9 +876,9 @@
 	NSMutableArray *adjustObservations = [[NSMutableArray alloc] init];
 	NSMutableArray *stopObservingProperties = [[NSMutableArray alloc] init];
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		for (NSString *propertyKey in self.observedMethodsDict_ebn)
+		for (NSString *propertyKey in self.ebn_observedMethodsDict)
 		{
 			if ([propertyKey hasPrefix:@"#"])
 			{
@@ -889,19 +896,19 @@
 					id newValueForIndex = nil;
 					if (observedIndex < [array count])
 						newValueForIndex = array[observedIndex];
-					[self manuallyTriggerObserversForProperty_ebn:propertyKey
+					[self ebn_manuallyTriggerObserversForProperty:propertyKey
 							previousValue:prevValueForIndex newValue:newValueForIndex];
 				}
 			} else if ([propertyKey isEqualToString:@"*"])
 			{
 				// If we have observations on '*', run them here
-				[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
+				[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
 			} else
 			{
 				NSUInteger keyIndex = [propertyKey integerValue];
 				if (keyIndex == removeIndex)
 				{
-					[self manuallyTriggerObserversForProperty_ebn:propertyKey previousValue:prevValue newValue:nil];
+					[self ebn_manuallyTriggerObserversForProperty:propertyKey previousValue:prevValue newValue:nil];
 					
 					// When this 'object-following' property is removed from the array, stop observing,
 					// since we can't observe this path anymore.
@@ -939,14 +946,14 @@
 		{
 			NSString *moveFromPropKey = adjustObservations[moverIndex];
 			NSString *moveToPropKey = [NSString stringWithFormat:@"%d", [moveFromPropKey intValue] - 1];
-			NSMapTable *observerTable = self.observedMethodsDict_ebn[moveFromPropKey];
-			[self.observedMethodsDict_ebn removeObjectForKey:moveFromPropKey];
-			[self.observedMethodsDict_ebn setObject:observerTable forKey:moveToPropKey];
+			NSMapTable *observerTable = self.ebn_observedMethodsDict[moveFromPropKey];
+			[self.ebn_observedMethodsDict removeObjectForKey:moveFromPropKey];
+			[self.ebn_observedMethodsDict setObject:observerTable forKey:moveToPropKey];
 		}
 	}
 	
 	// The count property changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
 			[NSNumber numberWithInteger:prevCount]];
 
 }
@@ -964,11 +971,11 @@
 	NSUInteger prevCount = [array count];
 	[array addObject:anObject];
 	
-	[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
-	[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:nil newValue:anObject];
+	[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+	[self ebn_manuallyTriggerObserversForProperty:propHashIndexString previousValue:nil newValue:anObject];
 	
 	// The count property changed; notify for it.
-	[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
+	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 }
 
 /****************************************************************************************************
@@ -993,16 +1000,16 @@
 		NSString *propIndexString = [[NSString alloc] initWithFormat:@"%lu", (long) prevLastIndex];
 		NSString *propHashIndexString = [[NSString alloc] initWithFormat:@"#%lu", (long) prevLastIndex];
 		
-		[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
-		[self manuallyTriggerObserversForProperty_ebn:propIndexString previousValue:prevValue newValue:nil];
-		[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:prevValue newValue:nil];
+		[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+		[self ebn_manuallyTriggerObserversForProperty:propIndexString previousValue:prevValue newValue:nil];
+		[self ebn_manuallyTriggerObserversForProperty:propHashIndexString previousValue:prevValue newValue:nil];
 				
 		// If an 'object-following' property was being observed, and its object is now removed from the array,
 		// stop observing, since we can't observe this path anymore.
 		[self stopObservingProperty:propIndexString];
 		
 		// The count property changed; notify for it.
-		[self manuallyTriggerObserversForProperty_ebn:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
+		[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:[NSNumber numberWithInteger:prevCount]];
 	}
 }
 
@@ -1021,9 +1028,9 @@
 	NSString *propIndexString = [[NSString alloc] initWithFormat:@"%lu", (unsigned long) index];
 	NSString *propHashIndexString = [[NSString alloc] initWithFormat:@"#%lu", (unsigned long) index];
 	
-	[self manuallyTriggerObserversForProperty_ebn:@"*" previousValue:nil newValue:nil];
-	[self manuallyTriggerObserversForProperty_ebn:propIndexString previousValue:prevValue newValue:anObject];
-	[self manuallyTriggerObserversForProperty_ebn:propHashIndexString previousValue:prevValue newValue:anObject];
+	[self ebn_manuallyTriggerObserversForProperty:@"*" previousValue:nil newValue:nil];
+	[self ebn_manuallyTriggerObserversForProperty:propIndexString previousValue:prevValue newValue:anObject];
+	[self ebn_manuallyTriggerObserversForProperty:propHashIndexString previousValue:prevValue newValue:anObject];
 			
 	// Object-following properties need to stop observing after their object leaves the array
 	[self stopObservingProperty:propIndexString];
@@ -1041,9 +1048,9 @@
 {
 	NSMapTable *observerTable = nil;
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		observerTable = [self.observedMethodsDict_ebn[propertyName] copy];
+		observerTable = [self.ebn_observedMethodsDict[propertyName] copy];
 	}
 	
 	for (EBNKeypathEntryInfo *entry in observerTable)
@@ -1051,16 +1058,16 @@
 		NSObject *observedObject = entry->_blockInfo->_weakObserved;
 		if (observedObject)
 		{
-			[observedObject removeKeypath_ebn:entry atIndex:0];
+			[observedObject ebn_removeKeypath:entry atIndex:0];
 		}
 	}
 }
 
 /****************************************************************************************************
-	valueForKey_ebn:
+	ebn_valueForKey:
 	
 */
-- (id) valueForKey_ebn:(NSString *)key
+- (id) ebn_valueForKey:(NSString *)key
 {
 	NSInteger index = -1;
 	if ([key hasPrefix:@"#"])
@@ -1080,46 +1087,48 @@
 #pragma mark Observable
 
 /****************************************************************************************************
-	observedMethodsDict_ebn
+	ebn_observedMethodsDict
 	
+	For Observable collections, this just returns the ivar for the observed methods table.
+	For other classes, this gets the observed methods dict out of an associated object.
+	
+	The caller of this method must be inside a @synchronized(EBNObservableSynchronizationToken), and must
+	remain inside that sync while using the dictionary.
 */
-- (NSMutableDictionary *) observedMethodsDict_ebn
+- (NSMutableDictionary *) ebn_observedMethodsDict
 {
-	@synchronized(self)
-	{
-		if (!_observedMethods)
-			_observedMethods = [[NSMutableDictionary alloc] init];
-	}
+	if (!_observedMethods)
+		_observedMethods = [[NSMutableDictionary alloc] init];
 
 	return _observedMethods;
 }
 
 /****************************************************************************************************
-	swizzleImplementationForSetter_ebn:
+	ebn_swizzleImplementationForSetter:
 	
 	Since we're not observing properties, we don't actually implement this method. Better said, we
 	override the default implementation to do nothing.
 */
-+ (bool) swizzleImplementationForSetter_ebn:(NSString *) propName
++ (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName
 {
-	return true;
+	return YES;
 }
 
 /****************************************************************************************************
-	createKeypath_ebn:atIndex:
+	ebn_createKeypath:atIndex:
 	
 	This makes '*' observations work correctly for collections; we directly add an entry for '*' 
 	instead of iterating through each property. Collection mutators then trigger the '*' observations
 	when they get called.
 */
-- (bool) createKeypath_ebn:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
+- (BOOL) ebn_createKeypath:(const EBNKeypathEntryInfo *) entryInfo atIndex:(NSInteger) index
 {
 	NSString *propName = entryInfo->_keyPath[index];
-	return [self createKeypath_ebn:entryInfo atIndex:index forProperty:propName];
+	return [self ebn_createKeypath:entryInfo atIndex:index forProperty:propName];
 }
 
 /****************************************************************************************************
-	removeKeypath_ebn:atIndex:
+	ebn_removeKeypath:atIndex:
 
 	For object-following array properties, the 'key' pointing to the property can move around as
 	objects are added/removed from the array. When we remove the keypath, we need to go find
@@ -1127,12 +1136,12 @@
 	
 	Also, for '*' observations, we directly remove the '*' entry from the table.
 	
-	Returns TRUE if the observation path was removed successfully.
+	Returns YES if the observation path was removed successfully.
 */
-- (bool) removeKeypath_ebn:(const EBNKeypathEntryInfo *) removeEntry atIndex:(NSInteger) index
+- (BOOL) ebn_removeKeypath:(const EBNKeypathEntryInfo *) removeEntry atIndex:(NSInteger) index
 {
 	if (index >= [removeEntry->_keyPath count])
-		return false;
+		return NO;
 
 	NSString *propName = removeEntry->_keyPath[index];
 	
@@ -1142,11 +1151,11 @@
 	// data model is designed wrong'.
 	if (isdigit([propName characterAtIndex:0]))
 	{
-		@synchronized(self)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
 			for (NSString *propertyKey in [self->_observedMethods allKeys])
 			{
-				[self removeKeypath_ebn:removeEntry atIndex:index forProperty:propertyKey];
+				[self ebn_removeKeypath:removeEntry atIndex:index forProperty:propertyKey];
 			}
 		}
 	}
@@ -1156,20 +1165,20 @@
 		NSArray *properties = nil;
 		@synchronized(EBNObservableSynchronizationToken)
 		{
-			properties = [self.observedMethodsDict_ebn allKeys];
+			properties = [self.ebn_observedMethodsDict allKeys];
 		}
 		
 		for (NSString *property in properties)
 		{
-			[self removeKeypath_ebn:removeEntry atIndex:index forProperty:property];
+			[self ebn_removeKeypath:removeEntry atIndex:index forProperty:property];
 		}
 	}
  	else
 	{
-		return [self removeKeypath_ebn:removeEntry atIndex:index forProperty:propName];
+		return [self ebn_removeKeypath:removeEntry atIndex:index forProperty:propName];
 	}
 		
-	return true;
+	return YES;
 }
 
 @end

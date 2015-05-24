@@ -54,7 +54,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 //
 // Observable Test Object B
 //
-@interface ModelObjectB : NSObject
+@interface ModelObjectB : NSObject  <NSCopying>
 
 @property (assign) int					intProperty;
 
@@ -114,6 +114,20 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 		_readonlyProperty = [[ModelObjectA alloc] init];
 	}
 	return self;
+}
+
+- (instancetype) copyWithZone:(NSZone *)zone
+{
+	ModelObjectB *newObj = [[[self class] allocWithZone:zone] init];
+	if (newObj)
+	{
+		newObj->_intProperty = _intProperty;
+		newObj->_stringProperty = _stringProperty;
+		newObj->_readonlyProperty = _readonlyProperty;
+		newObj->_modelObjectCProperty = _modelObjectCProperty;
+	}
+	
+	return newObj;
 }
 
 @end
@@ -509,7 +523,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 		blockSelf.observerCallCount1++;
 	});
 	
-	moA.modelObjectBProperty.modelObjectCProperty.ModelObjectAProperty = moA;
+	moA.modelObjectBProperty.modelObjectCProperty.modelObjectAProperty = moA;
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
 	XCTAssertEqual(self.observerCallCount1, 1, @"Observation block got called wrong number of times.");
 	[moA stopTellingAboutChanges:self];
@@ -646,7 +660,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 			@"Class method returns wrong thing.");
 	
 		//
-	XCTAssertEqual([[observableFirst class] getProperBaseClass_ebn], [ModelObjectA class],
+	XCTAssertEqual([[observableFirst class] ebn_properBaseClass], [ModelObjectA class],
 			@"getProperBaseClass isn't returning the base class.");
 	
 	XCTAssert(strcmp(object_getClassName(observableFirst), "NSKVONotifying_ModelObjectA_EBNShadowClass") == 0,
@@ -747,10 +761,24 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	Class baseClass = [moa class];
 	XCTAssert(strcmp(class_getName(shadowClass), "ModelObjectA_EBNShadowClass") == 0, @"Shadow Class has wrong name.");
 	XCTAssert(baseClass == [ModelObjectA class], @"Base class doesn't match up.");
-	
-	
 }
 
+- (void) testCopyBehavior
+{
+	ModelObjectB *mob1 = [[ModelObjectB alloc] init];
+	
+	[mob1 tell:self when:@"stringProperty" changes:^(ObservableTests *blockSelf, NSString *observed)
+	{
+		blockSelf.observerCallCount1++;
+	}];
+
+	ModelObjectB *mob2 = [mob1 copyWithZone:NULL];
+	
+	mob2.stringProperty = @"should not trigger observation.";
+
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssert(_observerCallCount1 == 0, @"Wrong number of calls to observer block.");
+}
 
 
 @end

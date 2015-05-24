@@ -105,7 +105,12 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 @interface EBNObservation : NSObject
 
+	/// Custom info shown in the debugger about this observation
 @property (strong) NSString				*debugString;
+
+	/// Marks the observation object as being a LazyLoader observer, that is, an observation set up
+	/// by LazyLoader to invalidate some other property when the observed property changes value.
+@property (assign) BOOL					isForLazyLoader;
 
 /**
 	Initializes a EBNObservation, for use with the given observed and observer objects.
@@ -136,7 +141,7 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return TRUE if observation was set up successfully
  */
-- (bool) observe:(NSString *) keyPath;
+- (BOOL) observe:(NSString *) keyPath;
 
 /**
 	Tells the receiver to being observing changes to multiple keypaths. All keypaths must be rooted 
@@ -146,7 +151,7 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return TRUE if observations were set up successfully
  */
-- (bool) observeMultiple:(NSArray *) keyPaths;
+- (BOOL) observeMultiple:(NSArray *) keyPaths;
 
 /**
 	Checks that the observing and observed objects haven't been dealloc'ed, and then executes 
@@ -154,7 +159,7 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return TRUE if the block was executed, else FALSE
  */
-- (bool) execute;
+- (BOOL) execute;
 
 /**
 	Checks that the observing and observed objects haven't been dealloc'ed, and then executes the
@@ -164,7 +169,7 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return TRUE if the block was executed, else FALSE
  */
-- (bool) executeWithPreviousValue:(id) prevValue;
+- (BOOL) executeWithPreviousValue:(id) prevValue;
 
 /**
 	For use by macros. Meant to gather __FILE__ and __LINE__ into the debug string for the observation.

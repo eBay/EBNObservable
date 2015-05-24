@@ -52,7 +52,9 @@
 
 >[Lazily Loaded Properties][lazilyloadedproperties]
 
->[Computed Properties][]
+>[Synthetic Properties][]
+
+>[Collection Properties and Mutability: a Case Study][]
 
 >[Custom Loaders][]
 
@@ -352,7 +354,7 @@ What this does is create an observation whose observer block will break into the
 ## Minutiae
 * Setting a property to the same value it currently has will not cause observers to fire. For properties of object type, uses pointer comparison and not `isEqual:` to determine equality.
 * Observable is designed to work with ARC exclusively, and it requires iOS 6.
-* Observable has several asserts for programmer errors and places that may need improvement. One such place is that we only currently work with a few types of struct properties. Every struct property needs to be special cased.
+* Observable tries to keep asserts to a minimum, but it has several asserts for programmer errors and places that may need improvement. One such place is that we only currently work with a few types of struct properties. Every struct property type needs to be special cased.
 * Observable can interoperate with Apple's KVO. Both systems can observe the same property of the same object without interfering with each other.
 
 # Observable Collections Reference #
@@ -385,7 +387,7 @@ All 3 classes conform to NSSecureCoding, NSCopying, and NSMutableCopying, althou
 ## EBNObservableDictionary ##
 Dictionary keys must be NSStrings in order for their contents to be observed.
 
-You can observe a key in a dictionary when that key does not yet have any value. Observation blocks on a key will be executed when that key's value is changed, where 'changed' means `[newValue isEqual:oldValue]` returns false. Calling `removeObjectForKey:` on an observed key will call observers if and only if the value for that key was previously non-nil.
+You can observe a key in a dictionary when that key does not yet have any value. Observation blocks on a key will be executed when that key's value is changed, where 'changed' means: exactly one of old value and new value are nil, or `![newValue isEqual: oldValue]` . Calling `removeObjectForKey:` on an observed key will call observers if and only if the value for that key was previously non-nil.
 
 ## EBNObservableSet ##
 Creating observable sets requires that we have some way to specify a member of a set in a text string. EBNObservableSet therefore has a special method, `keyForObject:` that returns a NSString that can be used in a key path to refer to that object. This method works by taking the hash of the object and turning it into a string starting with '&'. The object does not need to be in the set at the time its key is created, but beware since mutating the object can modify its hash value, meaning that were you to generate and observe a key, mutate the object, and then add it to the set, your observer block will not execute as the object added to the set no longer matches the key being observed.
@@ -418,13 +420,17 @@ The collection classes work by declaring themselves to be subclasses of their NS
 
 The reason for the odd subclass-plus-private-implementation thing is because the NS collection classes are class clusters, where the top-level object just defines the protocol and hidden subclasses actually implement the behavior. Therefore, our collection objects need to subclass Apple's in order to interoperate as collections, but they can't call super to implement their behaviors as the superclass doesn't implement them. 
 
+Copying an observable collection object does not copy the observations. However, mutableCopy will return an  observable collection object (an EBNObservable), not an NSMutable.
+
+EBNObservable collections are NSCoded using an archiver proxy object that deals with strange issues with how class clusters work with NSCoder.
+
 # LazyLoader Reference #
 
-LazyLoader is a class that leverages Observable to introduce a few new capabilities appropriate for model objects. LazyLoader allows for the creation of several types of *synthetic properties*, which in this context means a property whose value is synthesized from other values.
+LazyLoader is a class that leverages Observable to introduce a few new capabilities appropriate for model objects. LazyLoader allows for the creation of several types of *synthetic properties*, which in this context means a property whose value is synthesized from other property values.
 
-Using LazyLoader requires that you declare your object to be a subclass of LazyLoader. It is intended to be used for objects in the model layer of your application.
+Using LazyLoader used to require that you declare your object to be a subclass of LazyLoader, but this is no longer the case--LazyLoader is now a category on NSObject.
 
-All of these synthetic properties are **properties**, just like normal Objective-C properties. You can declare them strong, weak, assign, copy, atomic or not, readonly or readwrite. You can declare custom setters and getters or not. 
+LazyLoader synthetic properties are **properties**, just like normal Objective-C properties. You can declare them strong, weak, assign, copy, atomic or not, readonly or readwrite. You can declare custom setters and getters or not. 
 
 If these concepts sound somewhat similar to Apple's new property attributes in the Swift language, as it happens, they are. I'd written the code for this before hearing about Swift, and was very happy to see these sort of features in the Swift language (remember, Apple had been working on Swift for years, much longer than I've been working on LazyLoader). Lots of other people have come up with similar ideas as well; you can find examples on the internet.
 
@@ -467,10 +473,10 @@ There's also a convenience method to invalidate all the synthetic properties of 
 
 So far this code makes for a slight convenience, but isn't terribly useful. Hand-rolling lazily loaded properties isn't that difficult. However, this does make it easy to test your synthetic properties with and without lazy loading, simply by commenting out the `SyntheticProperty` call for that property. Without the `SyntheticProperty` call, your synthetic property will compute its value every time its getter is called.
 
-## Computed Properties ##
-Computed properties have a list of key paths that the computed property depends on; that is, computing the value for the computed property uses data from the properties in the key paths. Computed properties are like lazily loaded properties in that they don't compute their value until someone asks  for it, but computed properties manage their own invalidation--they observe their list of key paths and mark themselves invalidated when any of the values they depend on change.
+## Synthetic Properties ##
+A Synthetic property has a list of key paths that the property depends on; that is, computing the value for the computed property uses data from the properties in the key paths. Synthetic properties are like lazily loaded properties in that they don't compute their value until someone asks  for it, but synthetic properties manage their own invalidation--they observe their list of key paths and mark themselves invalidated when any of the values they depend on change.
 
-To declare a property to be a computed property, use code like the following, again in both method and macro form:
+To declare a property to be a synthetic property, use code like the following, again in both method and macro form:
 
 ```C
 	// Method
@@ -480,11 +486,41 @@ To declare a property to be a computed property, use code like the following, ag
 	SyntheticProperty(fullName, firstName, lastName);
 ```
 
-The `SyntheticProperty()` macro takes a variable number of arguments; the first argument is the property to be made synthetic, and the rest of the arguments are key paths (rooted at `self`) that the synthetic property uses to compute its value. If the value of the computed property can be completely determined by its dependent properties, there's no need to manually invalidate it--it'll automatically invalidate when any of its dependencies change.
+The `SyntheticProperty()` macro takes a variable number of arguments; the first argument is the property to be made synthetic, and the rest of the arguments are key paths (rooted at `self`) that the synthetic property uses to compute its value. If the value of the synthetic property can be completely determined by its dependent properties, there's no need to manually invalidate it--it'll automatically invalidate when any of its dependencies change.
 
-You still can manually invalidate a computed property; use this if the property value is dependent on both other properties and some non-property value (in this example case, that could be a non-property setting that determines whether fullName should be formatted "First Last" or "Last, First").
+You still can manually invalidate a synthetic property; use this if the property value is dependent on both other properties and some non-property value (in this example case, that could be a non-property setting that determines whether fullName should be formatted "First Last" or "Last, First").
 
 Internally, LazyLoader uses Observable to watch the dependent paths; this means that it performs path updating as values in the path change, and that it's okay to declare a dependent path before the start point of the path has been assigned a value. Again, LazyLoader currently requires that all dependent paths be rooted at `self`, although the only reason for this is simplicity.
+
+## Collection Properties and Mutability: a Case Study ##
+If you have a mutable collection in your class and you want it exposed publicly so that others can access it but definitely do not want others to mutate it, you can create a private mutable collection and a public immutable collection, and write a custom getter that copies the internal collection to the external one.
+
+```C
+	// In the .h file
+	@property NSDictionary *aDictionary;
+
+	// In the .m file
+	@property (strong) NSMutableDictionary *aMutableDictionary;
+	...
+	- (NSDictionary) aDictionary
+	{
+		return [aMutableDictionary copy];
+	}
+``` 
+
+However, the public property isn't observable and it creates a new copy of aMutableDictionary every time the public dictionary is requested. Okay, so the creating a new copy thing isn't really a performance issue. It isn't.
+
+Still, using LazyLoader we can easily improve on this:
+
+```C
+	// In the .m file: change our mutable property's type to EBNObservableDictionary
+	@property (strong) EBNObservableDictionary *aMutableDictionary;
+
+	// And, somewhere in the init method add this line
+	SyntheticProperty(aDictionary, aMutableDictionary.*);
+```
+
+And you're done. The aDictionary property will now be copied at most once per mutation performed on aMutableDictionary, and the public property is now properly observable--that is, observers of aDictionary will get called in response to aMutableDictionary being changed.
 
 ## Custom Loaders ##
 
@@ -512,7 +548,7 @@ This doesn't mean that a property can't be both synthetic and observed, just tha
 
 ## Chaining Synthetic Properties ##
 
-So far in our example, we have a `fullName` property that depends on the `firstName` and `lastName` properties. What if `fullName` were itself made into a dependency of another property?
+Take the example above where we have a `fullName` property that depends on the `firstName` and `lastName` properties. What if `fullName` were itself made into a dependency of another property?
 
 ```C
 	@property (strong) NSString *firstName;
@@ -556,11 +592,12 @@ When working on this code base, be aware that there's a fair number of unit test
 
 There's lots of room to improve on this code. Here's some good possibilities, in no particular order:
 
-* LazyLoader could be made into a category on NSObject.
 * Observable uses @synchronize in places where it needs thread-safety. This is very safe, as @synchronize handles unlocking in the case of exceptions being thrown, but it is quite slow compared to other available synchronization methods. As always, profile your code first, and only undertake this optimization if you find that @synchronize is actually slowing you down.
 * LazyLoader is designed to make it easy to enable and disable its functionality--in most cases, just commenting out one line of code will return a property to its non-synthetic state. This is the main reason I didn't go with a model where you could declare a block that would compute the property's value--the block would work nothing like the getter method and testing a property with and without lazy loading would become very difficult. However, this means that the point in the code where you declare a property synthetic is often far away from where its value is computed. There's a couple of ways to remedy this; I'm interested in what people come up with.
 *   The demonstration app is currently pretty weak; I didn't even mention it in this documentation. Writing something that loads some data from a web service call, puts the data into a model object, and has views that observe the model object's properties would be ideal.
 *   The LazyLoader documentation concerning loader methods discusses classes that expose a property-based API but store their values in a dictionary, but the SDK doesn't currently include one of these classes.
+*   The current design is such that declaring an observation at the class level (probably in `+initialize`?) so that every object of that type would have that observation active could be a thing. It could have a performance advantage relative to setting up observations in `-init` if you were creating a large number of objects. In other words, write a new class method that says, "Every object of this class that gets created should have this here observation on it, right when it gets initialized."
+*  Better debugging: for the observations that operate on multiple key paths, having console logging that shows what change(s) caused the observer block to be scheduled would be useful.
 *   More unit tests, as ever.
 
 # Credits #

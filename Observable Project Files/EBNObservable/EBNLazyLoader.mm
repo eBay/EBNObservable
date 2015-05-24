@@ -5,14 +5,21 @@
 	Created by Chall Fry on 4/29/14.
     Copyright (c) 2013-2014 eBay Software Foundation.
 	
-	EBNLazyLoader is a super class for model objects (that is, objects in your app's Model layer),
-	that has methods making it easy to create synthetic properties that compute their value
-	lazily.
-	
-	EBNLazyLoader is a subclass of EBNObservable.
+	EBNLazyLoader is a category on NSObject that provides the ability for creating synthetic properties.
+
+	Synthetic properties use lazy evaluation--they only compute their value when requested.
+	They also use caching--once they compute their value, that value is cached.
+	A synthetic property has a concept of whether it is in a valid or invalid state, separate from whether
+			its value is 0 or NULL.
+	There are methods to invalidate a synthetic properties' value--meaning it will be recomputed next time requested.
+	Synthetic properties can optionally declare themselves dependent on the values of other properties;
+			meaning they are automatically invalidated when the property they take a value from changes.
+	Synthetic properties interoperate correctly with observations.
+	Synthetic properties can chain off of other synthetic properties.
 */
 
 #import <CoreGraphics/CGGeometry.h>
+#import <objc/message.h>
 
 #import "DebugUtils.h"
 #import "EBNLazyLoader.h"
@@ -21,11 +28,7 @@
 template<typename T> void overrideGetterMethod(NSString *propName, Method getter,
 		Ivar getterIvar, Class classToModify);
 
-@implementation EBNLazyLoader
-{
-@public
-	NSMutableSet 	*_currentlyValidProperties;
-}
+@implementation NSObject (EBNLazyLoader)
 
 #pragma mark Public API
 
@@ -48,7 +51,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (void) syntheticProperty:(NSString *)property withLazyLoaderMethod:(SEL) loader
 {
-	[self wrapPropertyMethods:property customLoader:loader];
+	[self ebn_wrapPropertyMethods:property customLoader:loader];
 }
 
 /****************************************************************************************************
@@ -62,18 +65,19 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (void) syntheticProperty:(NSString *) property dependsOn:(NSString *) keyPath
 {
-	[self wrapPropertyMethods:property customLoader:nil];
+	[self ebn_wrapPropertyMethods:property customLoader:nil];
 
 	if (keyPath)
 	{
 		// Set up our observation
 		EBNObservation *blockInfo = NewObservationBlockImmed(self,
 		{
-			[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
+			[blockSelf invalidatePropertyValue:property];
 		});
 		[blockInfo setDebugString:[NSString stringWithFormat:
 				@"%p: Synthetic property \"%@\" of <%@: %p>",
 				blockInfo, property, [self class], self]];
+		blockInfo.isForLazyLoader = YES;
 		[blockInfo observe:keyPath];
 	}
 }
@@ -86,16 +90,17 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (void) syntheticProperty:(NSString *) property dependsOnPaths:(NSArray *) keyPaths
 {
-	[self wrapPropertyMethods:property customLoader:nil];
+	[self ebn_wrapPropertyMethods:property customLoader:nil];
 
 	// Set up our observation
 	EBNObservation *blockInfo = NewObservationBlockImmed(self,
 	{
-		[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
+		[blockSelf invalidatePropertyValue:property];
 	});
 	[blockInfo setDebugString:[NSString stringWithFormat:
 			@"%p: Synthetic property \"%@\" of <%@: %p>",
 			blockInfo, property, [self class], self]];
+	blockInfo.isForLazyLoader = YES;
 	[blockInfo observeMultiple:keyPaths];
 }
 
@@ -121,22 +126,24 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	EBAssert([keyPathArray count], @"The SyntheticProperty() macro needs to be called with at least the"
 			@" property you're declaring as synthetic.");
 	NSString *property = [keyPathArray objectAtIndex:0];
-	[self wrapPropertyMethods:property customLoader:nil];
+	[self ebn_wrapPropertyMethods:property customLoader:nil];
 	[keyPathArray removeObjectAtIndex:0];
 	
 	if ([keyPathArray count])
 	{
 		// Set up our observation
-		EBNObservation *blockInfo = NewObservationBlockImmed(self,
-		{
-			[blockSelf manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
-		});
+		EBNObservation *blockInfo = [[EBNObservation alloc] initForObserved:self observer:self
+				immedBlock:^(NSObject *blockSelf, NSObject *observer, id prevValue)
+				{
+					[blockSelf invalidatePropertyValue:property];
+				}];
 
 #if defined(DEBUG) && DEBUG
 		[blockInfo setDebugString:[NSString stringWithFormat:
 				@"%p: Synthetic property \"%@\" of <%@: %p>",
 				blockInfo, property, [self class], self]];
 #endif
+		blockInfo.isForLazyLoader = YES;
 		[blockInfo observeMultiple:keyPathArray];
 	}
 }
@@ -153,46 +160,34 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (void) invalidatePropertyValue:(NSString *) property
 {
-	id prevValue;
-	id newValue;
-	BOOL valueChanged = false;
-	BOOL isBeingObserved = false;
+	BOOL wasValid = NO;
 	
-	// Is this property being observed?
+	// First check whether the property is in the valid list
 	@synchronized(EBNObservableSynchronizationToken)
 	{
-		if (self.observedMethodsDict_ebn[property])
+		NSMutableSet *validProperties = self.ebn_currentlyValidProperties;
+		if ([validProperties containsObject:property])
 		{
-			isBeingObserved = true;
-		}
-		else
-		{
-			// If it's not being observed just remove it from the valid list.
-			[self->_currentlyValidProperties removeObject:property];
+			wasValid = YES;
 		}
 	}
-
-	if (isBeingObserved)
+	
+	// A bit of inductive logic here: If the property wasn't previously valid, it wasn't being
+	// observed, as observed properties have to be forced valid. This is all being done because
+	// asking for prevValue won't recompute if wasValid is true.
+	if (wasValid)
 	{
-		// The property can't be left invalid while being observed. Get the previous value and
-		// then immediately compute the new value by marking it invalid and re-requesting the value
-		prevValue = [self valueForKeyPath:property];
+		// This should get the cached (valid) value
+		id prevValue = [self ebn_valueForKey:property];
 		@synchronized(EBNObservableSynchronizationToken)
 		{
-			[self->_currentlyValidProperties removeObject:property];
+			// Now we remove the property from the valid list
+			NSMutableSet *validProperties = self.ebn_currentlyValidProperties;
+			[validProperties removeObject:property];
 		}
-		newValue = [self valueForKeyPath:property];
-		
-		if (!((newValue == NULL && prevValue == NULL) || [newValue isEqual:prevValue]))
-			valueChanged = true;
-	}
-
-	// If the value changed, trigger observers
-	if (valueChanged)
-	{
-		// Mark this property invalid, and trigger anyone observing it, telling them that the property
-		// value has changed.
-		[super manuallyTriggerObserversForProperty_ebn:property previousValue:prevValue];
+	
+		// And call manually trigger to tell observers about the change.
+		[self ebn_manuallyTriggerObserversForProperty:property previousValue:prevValue];
 	}
 }
 
@@ -216,9 +211,9 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	{
 		EBNShadowedClassInfo *info = nil;
 		
-		if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+		if (class_respondsToSelector(object_getClass(self), @selector(ebn_shadowClassInfo)))
 		{
-			info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+			info = [(NSObject<EBNObservable_Custom_Selectors> *) self ebn_shadowClassInfo];
 		}
 		if (!info)
 		{
@@ -230,7 +225,6 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 			[lazyProperties setSet:info->_getters];
 		[lazyProperties intersectSet:properties];
 	}
-	
 	
 	for (NSString *curProperty in lazyProperties)
 	{
@@ -248,9 +242,9 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 {
 	NSArray *validPropertyArray = nil;
 	
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		validPropertyArray =  [self->_currentlyValidProperties allObjects];
+		validPropertyArray =  self.ebn_currentlyValidProperties.allObjects;
 	}
 	
 	for (NSString *curProperty in validPropertyArray)
@@ -259,73 +253,66 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	}
 }
 
-/****************************************************************************************************
-	manuallyTriggerObserversForProperty_ebn:previousValue:
-	
-	Marks the property as invalid, and calls all of its observers.
-	
-	Note that you can't use this to set the ivar for a property directly and then get 
-	observers to be nofitied. Since synthetic properties compute their value from other properties
-	in a defined way, calling this will just mark the property as invalid and then it gets 
-	recomputed lazily.
-*/
-- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue
-{
-	// I'd considered checking to see if the property was already invalid and not triggering observers
-	// in that case, but I don't think that works. If a new observer registered between the first
-	// and second invalidations it wouldn't get called.
-	@synchronized(self)
-	{
-		[self->_currentlyValidProperties removeObject:propertyName];
-	}
-	[super manuallyTriggerObserversForProperty_ebn:propertyName previousValue:prevValue];
-}
-
 #pragma mark Private Methods
 
 /****************************************************************************************************
-	wrapPropertyMethods
+	ebn_currentlyValidProperties
+
+	This gets the observed methods dict out of an associated object, creating it if necessary.
+	Note the EBNObservable has its own implementation of this method, which gets the dict out of an ivar.
+	
+	The caller of this method must be inside a @synchronized(EBNObservableSynchronizationToken), and must
+	remain inside that sync while using the dictionary.
+*/
+- (NSMutableSet *) ebn_currentlyValidProperties
+{
+	NSMutableSet *currentlyValidProperties =
+			objc_getAssociatedObject(self, @selector(ebn_currentlyValidProperties));
+	if (!currentlyValidProperties)
+	{
+		currentlyValidProperties = [[NSMutableSet alloc] init];
+		objc_setAssociatedObject(self, @selector(ebn_currentlyValidProperties), currentlyValidProperties,
+				OBJC_ASSOCIATION_RETAIN);
+	}
+	
+	return currentlyValidProperties;
+}
+
+/****************************************************************************************************
+	ebn_wrapPropertyMethods
 	
 	Swaps out the getter and setter for the given property.
 */
-- (BOOL) wrapPropertyMethods:(NSString *) propName customLoader:(SEL) loader
+- (BOOL) ebn_wrapPropertyMethods:(NSString *) propName customLoader:(SEL) loader
 {
-	if (![self swizzleImplementationForGetter:propName customLoader:loader])
+	// The getter must be found and swizzled
+	if (![self ebn_swizzleImplementationForGetter:propName customLoader:loader])
 		return NO;
 
-	[self swizzleImplementationForSetter_ebn:propName];
-
-	@synchronized(self)
-	{
-		// Lazily create our set of currently valid properties. At the start, none of the lazily loaded
-		// properties are going to be valid.
-		if (!self->_currentlyValidProperties)
-		{
-			self->_currentlyValidProperties = [[NSMutableSet alloc] init];
-		}
-	}
+	// Readonly properties don't have a setter; this will fail in that case and that's okay
+	[self ebn_swizzleImplementationForSetter:propName];
 	
 	return YES;
 }
 
 /****************************************************************************************************
-	markPropertyValid_ebn:
+	ebn_markPropertyValid:
 	
 	Internal method to mark a property as being cached in its ivar, so that future accesses to 
 	it will return the cached value.
 */
-- (void) markPropertyValid_ebn:(NSString *) property
+- (void) ebn_markPropertyValid:(NSString *) property
 {
 	// This just sanity checks that the property string is actually 1) a property, and 2) set up
 	// to be lazily loaded. As it happens, everything works fine without this check, even if you
 	// do call it with non-properties. Not that you should do that.
-	@synchronized (EBNBaseClassToShadowInfoTable)
+	@synchronized(EBNBaseClassToShadowInfoTable)
 	{
 		EBNShadowedClassInfo *info = nil;
 		
-		if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+		if (class_respondsToSelector(object_getClass(self), @selector(ebn_shadowClassInfo)))
 		{
-			info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+			info = [(NSObject<EBNObservable_Custom_Selectors> *) self ebn_shadowClassInfo];
 		}
 		if (!info)
 		{
@@ -339,14 +326,41 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	}
 
 	// Mark it valid
-	@synchronized(self)
+	@synchronized(EBNObservableSynchronizationToken)
 	{
-		[self->_currentlyValidProperties addObject:property];
+		[self.ebn_currentlyValidProperties addObject:property];
 	}
 }
 
 /****************************************************************************************************
-	swizzleImplementationForGetter:
+	ebn_forcePropertyValid:
+	
+ 	Forces the given property into its valid state. The method does this by calling the getter on the
+	property.
+
+*/
+- (void) ebn_forcePropertyValid:(NSString *) property
+{
+	// Are we valid already?
+	@synchronized(EBNObservableSynchronizationToken)
+	{
+		if ([self.ebn_currentlyValidProperties containsObject:property])
+			return;
+	}
+	
+	SEL getterSelector = [[self class] ebn_selectorForPropertyGetter:property];
+	if (getterSelector)
+	{
+		NSMethodSignature *methodSig = [self methodSignatureForSelector:getterSelector];
+		NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:methodSig];
+		[invocation setTarget:self];
+		[invocation setSelector:getterSelector];
+		[invocation invoke];
+	}
+}
+
+/****************************************************************************************************
+	ebn_swizzleImplementationForGetter:
 	
 	Swizzles the implemention of the getter method of the given property. The swizzled implementation
 	checks to see if the ivar backing the property is valid (== if lazy loading has happened) and if so
@@ -356,14 +370,14 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideGetterMethod<>() to create a new method and swizzle it in.
 */
-- (BOOL) swizzleImplementationForGetter:(NSString *) propertyName customLoader:(SEL) loader
+- (BOOL) ebn_swizzleImplementationForGetter:(NSString *) propertyName customLoader:(SEL) loader
 {
-	Class classToModify = [self prepareToObserveProperty_ebn:propertyName isSetter:NO];
+	Class classToModify = [self ebn_prepareToObserveProperty:propertyName isSetter:NO];
 	if (!classToModify)
 		return YES;
 
 	// Get the method selector for the getter on this property
-	SEL getterSelector = [[self class] selectorForPropertyGetter_ebn:propertyName];
+	SEL getterSelector = [[self class] ebn_selectorForPropertyGetter:propertyName];
 	EBAssert(getterSelector, @"Couldn't find getter method for property %@ in object %@", propertyName, self);
 	if (!getterSelector)
 		return NO;
@@ -501,7 +515,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 */
 - (NSSet *) debug_validProperties
 {
-	return self->_currentlyValidProperties;
+	return self.ebn_currentlyValidProperties;
 }
 
 /****************************************************************************************************
@@ -523,9 +537,9 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	NSMutableSet *invalidPropertySet = [[NSMutableSet alloc] init];
 	EBNShadowedClassInfo *info = nil;
 		
-	if (class_respondsToSelector(object_getClass(self), @selector(getShadowClassInfo_EBN)))
+	if (class_respondsToSelector(object_getClass(self), @selector(ebn_shadowClassInfo)))
 	{
-		info = [(NSObject<EBNObservable_Custom_Selectors> *) self getShadowClassInfo_EBN];
+		info = [(NSObject<EBNObservable_Custom_Selectors> *) self ebn_shadowClassInfo];
 	}
 	if (!info)
 	{
@@ -538,7 +552,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	}
 	
 	// Now subtract out all the properties that are currently valid. What's left is the invalid properties.
-	[invalidPropertySet minusSet:self->_currentlyValidProperties];
+	[invalidPropertySet minusSet:self.ebn_currentlyValidProperties];
 	return invalidPropertySet;
 }
 
@@ -596,7 +610,7 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	}
 
 	// This is what gets run when the getter method gets called.
-	T (^getLazily)(EBNLazyLoader *) = ^ T (EBNLazyLoader *blockSelf)
+	T (^getLazily)(NSObject *) = ^ T (NSObject *blockSelf)
 	{
 		// NOTE: Read this fn's comments. This doesn't get called for object properties.
 		// And yes--we need all 3 casts.
@@ -605,9 +619,9 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 		BOOL mustPerformLoad = false;
 		
 		// Check whether the property is valid.
-		@synchronized(blockSelf)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			propertyIsValid = [blockSelf.ebn_currentlyValidProperties containsObject:propName];
 			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
 				[threadsPerformingLoads addObject:[NSThread currentThread]];
@@ -627,18 +641,23 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 			// dictionaries and fronted with property names.
 			if (mustPerformLoad)
 			{
-				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
-				// importantly how ARC is supposed to treat the the returned value's ownership state (if
-				// it returns an object at all), ARC will warn that performSelector might leak here.
-				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
-				#pragma clang diagnostic push
-				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-				[blockSelf performSelector:loader withObject:propName];
-				#pragma clang diagnostic pop
-				
-				@synchronized(blockSelf)
+				@try
 				{
-					[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+					// importantly how ARC is supposed to treat the the returned value's ownership state (if
+					// it returns an object at all), ARC will warn that performSelector might leak here.
+					// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+					#pragma clang diagnostic push
+					#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+					[blockSelf performSelector:loader withObject:propName];
+					#pragma clang diagnostic pop
+				}
+				@finally
+				{
+					@synchronized(EBNObservableSynchronizationToken)
+					{
+						[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					}
 				}
 			}
 
@@ -646,9 +665,9 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 			// in the ivar. Then we need to mark the property as valid.
 			T value = (originalGetter)(blockSelf, getterSEL);
 			*ivarPtr = value;
-			@synchronized(blockSelf)
+			@synchronized(EBNObservableSynchronizationToken)
 			{
-				[blockSelf->_currentlyValidProperties addObject:propName];
+				[blockSelf.ebn_currentlyValidProperties addObject:propName];
 			}
 			return value;
 		}
@@ -685,15 +704,15 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 	}
 
 	// This is what gets run when the getter method gets called.
-	id (^getLazily)(EBNLazyLoader *) = ^ id (EBNLazyLoader *blockSelf)
+	id (^getLazily)(NSObject *) = ^ id (NSObject *blockSelf)
 	{
 		BOOL propertyIsValid = false;
 		BOOL mustPerformLoad = false;
 		
 		// Check whether the property is valid.
-		@synchronized(blockSelf)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			propertyIsValid = [blockSelf.ebn_currentlyValidProperties containsObject:propName];
 			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
 				[threadsPerformingLoads addObject:[NSThread currentThread]];
@@ -713,18 +732,23 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 			// dictionaries and fronted with property names.
 			if (mustPerformLoad)
 			{
-				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
-				// importantly how ARC is supposed to treat the the returned value's ownership state (if
-				// it returns an object at all), ARC will warn that performSelector might leak here.
-				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
-				#pragma clang diagnostic push
-				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-				[blockSelf performSelector:loader withObject:propName];
-				#pragma clang diagnostic pop
-
-				@synchronized(blockSelf)
+				@try
 				{
-					[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+					// importantly how ARC is supposed to treat the the returned value's ownership state (if
+					// it returns an object at all), ARC will warn that performSelector might leak here.
+					// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+					#pragma clang diagnostic push
+					#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+					[blockSelf performSelector:loader withObject:propName];
+					#pragma clang diagnostic pop
+				}
+				@finally
+				{
+					@synchronized(EBNObservableSynchronizationToken)
+					{
+						[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					}
 				}
 			}
 			
@@ -732,9 +756,9 @@ template<> void overrideGetterMethod<id>(NSString *propName, Method getter, Ivar
 			// in the ivar. Then we need to mark the property as valid.
 			id value = (originalGetter)(blockSelf, getterSEL);
 			object_setIvar(blockSelf, getterIvar, value);
-			@synchronized(blockSelf)
+			@synchronized(EBNObservableSynchronizationToken)
 			{
-				[blockSelf->_currentlyValidProperties addObject:propName];
+				[blockSelf.ebn_currentlyValidProperties addObject:propName];
 			}
 			return value;
 		}
@@ -771,15 +795,15 @@ template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
 	}
 
 	// This is what gets run when the getter method gets called.
-	Class (^getLazily)(EBNLazyLoader *) = ^ Class (EBNLazyLoader *blockSelf)
+	Class (^getLazily)(NSObject *) = ^ Class (NSObject *blockSelf)
 	{
 		BOOL propertyIsValid = false;
 		BOOL mustPerformLoad = false;
 		
 		// Check whether the property is valid.
-		@synchronized(blockSelf)
+		@synchronized(EBNObservableSynchronizationToken)
 		{
-			propertyIsValid = [blockSelf->_currentlyValidProperties containsObject:propName];
+			propertyIsValid = [blockSelf.ebn_currentlyValidProperties containsObject:propName];
 			if (!propertyIsValid && loader && ![threadsPerformingLoads containsObject:[NSThread currentThread]])
 			{
 				[threadsPerformingLoads addObject:[NSThread currentThread]];
@@ -799,18 +823,23 @@ template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
 			// dictionaries and fronted with property names.
 			if (mustPerformLoad)
 			{
-				// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
-				// importantly how ARC is supposed to treat the the returned value's ownership state (if
-				// it returns an object at all), ARC will warn that performSelector might leak here.
-				// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
-				#pragma clang diagnostic push
-				#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-				[blockSelf performSelector:loader withObject:propName];
-				#pragma clang diagnostic pop
-
-				@synchronized(blockSelf)
+				@try
 				{
-					[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					// Because ARC doesn't know what type the dynamic 'loader' selector returns, and more
+					// importantly how ARC is supposed to treat the the returned value's ownership state (if
+					// it returns an object at all), ARC will warn that performSelector might leak here.
+					// Since the loader is defined to return NULL, it won't leak in this case, hence the pragmas.
+					#pragma clang diagnostic push
+					#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+					[blockSelf performSelector:loader withObject:propName];
+					#pragma clang diagnostic pop
+				}
+				@finally
+				{
+					@synchronized(EBNObservableSynchronizationToken)
+					{
+						[threadsPerformingLoads removeObject:[NSThread currentThread]];
+					}
 				}
 			}
 
@@ -818,9 +847,9 @@ template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
 			// in the ivar. Then we need to mark the property as valid.
 			id value = (originalGetter)(blockSelf, getterSEL);
 			object_setIvar(blockSelf, getterIvar, value);
-			@synchronized(blockSelf)
+			@synchronized(EBNObservableSynchronizationToken)
 			{
-				[blockSelf->_currentlyValidProperties addObject:propName];
+				[blockSelf.ebn_currentlyValidProperties addObject:propName];
 			}
 			return value;
 		}
@@ -831,7 +860,14 @@ template<> void overrideGetterMethod<Class>(NSString *propName, Method getter,
 	class_replaceMethod(classToModify, getterSEL, swizzledImplementation, method_getTypeEncoding(getter));
 }
 
-
-
-
 @end
+
+
+/****************************************************************************************************
+	EBNLazyLoader the class is deprecated. Here for compatibility.
+
+*/
+@implementation EBNLazyLoader
+@end
+
+

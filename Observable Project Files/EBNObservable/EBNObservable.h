@@ -230,7 +230,7 @@
 	@param propertyName The property that changed value
 	@param prevValue    The value the property had before the change.
  */
-- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue;
+- (void) ebn_manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue;
 
 /**
 	For manually triggering observers. EBNObervable subclasses can use this if they
@@ -249,18 +249,21 @@
 	@param propertyName The property that changed value
 	@param prevValue    The value the property had before the change.
  */
-- (void) manuallyTriggerObserversForProperty_ebn:(NSString *) propertyName previousValue:(id) prevValue newValue:(id) newValue;
+- (void) ebn_manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue newValue:(id) newValue;
 
 /**
 	Attempts to get the actual base class for a given class, before runtime subclassing. This is a bug workaround
-	for a case where Apple's KVO subclasses an Observable subclass.
+	for a case where Apple's KVO subclasses an Observable subclass. Generally you can use [self class] and
+	get the baseclass, but if Apple's KVO subclasses our (or anyone else's) runtime subclass, KVO does the 
+	wrong thing and returns its immediate super, not the 'base' class the object had before any runtime
+	subclass hackery.
 	
 	The result is what [self class] should return for instances of this class, but doesn't in the case where 
 	Apple's KVO subclasses an Observable subclass. 
 
 	@return The base class--the class that's at the root of any runtime subclassing
  */
-+ (Class) getProperBaseClass_ebn;
++ (Class) ebn_properBaseClass;
 
 @end
 

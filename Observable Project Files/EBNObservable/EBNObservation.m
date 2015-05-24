@@ -26,10 +26,10 @@
 {
 	if (self = [super init])
 	{
-		self->_weakObserved = observed;
-		self->_weakObserver = observer;
-		self->_weakObserver_forComparisonOnly = observer;
-		self->_copiedBlock = [callBlock copy];
+		_weakObserved = observed;
+		_weakObserver = observer;
+		_weakObserver_forComparisonOnly = observer;
+		_copiedBlock = [callBlock copy];
 	}
 	
 	return self;
@@ -45,10 +45,10 @@
 {
 	if (self = [super init])
 	{
-		self->_weakObserved = observed;
-		self->_weakObserver = observer;
-		self->_weakObserver_forComparisonOnly = observer;
-		self->_copiedImmedBlock = [callBlock copy];
+		_weakObserved = observed;
+		_weakObserver = observer;
+		_weakObserver_forComparisonOnly = observer;
+		_copiedImmedBlock = [callBlock copy];
 	}
 	
 	return self;
@@ -64,7 +64,7 @@
 	if (fnName && filePath)
 	{
 		self.debugString = [NSString stringWithFormat:@"%p: for <%s: %p> declared at %s:%d",
-				self, class_getName([self->_weakObserver class]), self->_weakObserver, basename((char *) filePath), lineNum];
+				self, class_getName([_weakObserver class]), _weakObserver, basename((char *) filePath), lineNum];
 	}
 
 }
@@ -80,31 +80,34 @@
 		return [NSString stringWithFormat:@"%@", self.debugString];
 	else
 		return [NSString stringWithFormat:@"A block at:%p for <%s: %p ",
-				self, class_getName([self->_weakObserver class]), self->_weakObserver];
+				self, class_getName([_weakObserver class]), _weakObserver];
 }
 
 /****************************************************************************************************
 	observe:
 	
+	Tells the receiver to get to work, observing the given path. Once you've created an EBNObserver,
+	you can repeatedly tell it to observe a bunch of paths; however, all of them need to have
+	the same observer and observee objects.
 */
-- (bool) observe:(NSString *) keyPath
+- (BOOL) observe:(NSString *) keyPath
 {
-	NSObject *observedObj = self->_weakObserved;
-	id strongObserver = self->_weakObserver;
+	NSObject *observedObj = _weakObserved;
+	id strongObserver = _weakObserver;
 	if (observedObj && strongObserver)
 	{
-		return [observedObj observe_ebn:keyPath using:self];
+		return [observedObj ebn_observe:keyPath using:self];
 	}
-	return false;
+	return NO;
 }
 
 /****************************************************************************************************
 	observeMultiple:
 	
 */
-- (bool) observeMultiple:(NSArray *) keyPaths
+- (BOOL) observeMultiple:(NSArray *) keyPaths
 {
-	bool result = true;
+	BOOL result = YES;
 	for (NSString *keyPath in keyPaths)
 	{
 		result = [self observe:keyPath];
@@ -118,9 +121,9 @@
 	
 	Runs the block. Checks that the observed and observing object are still around first.
 */
-- (bool) execute
+- (BOOL) execute
 {
-	NSObject *blockSelf = self->_weakObserved;
+	NSObject *blockSelf = _weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
@@ -128,17 +131,17 @@
 		return false;
 	}
 	
-	id blockObserver = self->_weakObserver;
+	id blockObserver = _weakObserver;
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
-		[blockSelf reapBlocks_ebn];
-		return false;
+		[blockSelf ebn_reapBlocks];
+		return NO;
 	}
 	
-	if (self->_copiedBlock)
-		self->_copiedBlock(blockObserver, blockSelf);
-	return true;
+	if (_copiedBlock)
+		_copiedBlock(blockObserver, blockSelf);
+	return YES;
 }
 
 /****************************************************************************************************
@@ -146,26 +149,26 @@
 	
 	Runs the block. Checks that the observed and observing object are still around first.
 */
-- (bool) executeWithPreviousValue:(id) prevValue
+- (BOOL) executeWithPreviousValue:(id) prevValue
 {
-	NSObject *blockSelf = self->_weakObserved;
+	NSObject *blockSelf = _weakObserved;
 	if (!blockSelf)
 	{
 		EBLogContext(kLoggingContextOther,
 				@"Shouldn't be possible to run a observation block when the observed object is dealloced.");
-		return false;
+		return NO;
 	}
 	
-	id blockObserver = self->_weakObserver;
+	id blockObserver = _weakObserver;
 	if (!blockObserver)
 	{
 		// If the observer has gone away, remove ourselves
-		[blockSelf reapBlocks_ebn];
+		[blockSelf ebn_reapBlocks];
 		return false;
 	}
 	
-	if (self->_copiedImmedBlock)
-		self->_copiedImmedBlock(blockObserver, blockSelf, prevValue);
+	if (_copiedImmedBlock)
+		_copiedImmedBlock(blockObserver, blockSelf, prevValue);
 	return true;
 }
 

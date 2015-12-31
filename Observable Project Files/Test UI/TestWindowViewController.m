@@ -23,7 +23,7 @@
 	IBOutlet UITableView 	*table;
 	NSMutableArray			*tableCells;
 
-	ModelObject1 			*modelObj2;
+	ModelObject2 			*modelObj2;
 	
 	ModelObject4			*modelObj4;
 	BOOL					runningTortureTest;
@@ -37,7 +37,7 @@
 		tableCells = [[NSMutableArray alloc] init];
 		[self setupTableCells];
 		
-		modelObj2 = [[ModelObject1 alloc] init];
+		modelObj2 = [[ModelObject2 alloc] init];
 		ObserveProperty(modelObj2, stringProperty,
 		{
 			NSLog(@"Model2 new value is:%@", observed.stringProperty);
@@ -149,20 +149,20 @@
 
 - (void) runMultipleObservationDemo
 {
-	ModelObject2 *model3 = [[ModelObject2 alloc] init];
+	ModelObject2 *model2 = [[ModelObject2 alloc] init];
 	
-	[model3 tell:self when:@"*" changes:^(TestWindowViewController *me, ModelObject2 *obj)
-			{
-				NSLog(@"Model3 new int prop:%d new string prop: %@", obj.intProperty, obj.stringProperty);
-				NSLog(@"Model3 range property: %d, %d", (int) obj.rangeProperty.location, (int) obj.rangeProperty.length);
-			}];
-						
-	model3.intProperty = 5;
-	model3.stringProperty = @"stringthing";
-	model3.intProperty = 17;
-	[model3 setStringProperty:@"thisisastring"];
+	[model2 tell:self when:@"*" changes:^(TestWindowViewController *me, ModelObject2 *obj)
+	{
+		NSLog(@"Model2 new int prop:%d new string prop: %@", obj.intProperty, obj.stringProperty);
+		NSLog(@"Model2 range property: %d, %d", (int) obj.rangeProperty.location, (int) obj.rangeProperty.length);
+	}];
 	
-	model3.rangeProperty = NSMakeRange(33, 2);
+	model2.intProperty = 5;
+	model2.stringProperty = @"stringthing";
+	model2.intProperty = 17;
+	[model2 setStringProperty:@"thisisastring"];
+	
+	model2.rangeProperty = NSMakeRange(33, 2);
 }
 
 - (void) runPerfTest
@@ -248,6 +248,8 @@
 
 - (void) runMultithreadTortureTest
 {
+	ebn_WarnOnMultipleObservations = false;
+
 	modelObj4 = [[ModelObject4 alloc] init];
 	runningTortureTest = YES;
 	
@@ -286,7 +288,11 @@
 - (void) timerDone:(NSTimer *) timer
 {
 	runningTortureTest = NO;
-	NSLog(@"Torture Test complete.");
+	
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(.5 * NSEC_PER_SEC)), dispatch_get_main_queue(),
+	^{
+		NSLog(@"Torture Test complete.");
+	});
 	
 	[modelObj4 stopTellingAboutChanges:self];
 }

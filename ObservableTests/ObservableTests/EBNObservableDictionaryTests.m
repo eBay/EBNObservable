@@ -12,6 +12,7 @@
 
 #import "EBNObservable.h"
 #import "EBNObservableCollections.h"
+#import "DebugUtils.h"
 
 // This punches the hole that allows us to force the observer notifications
 // instead of being dependent on the run loop. Asyncronous issues
@@ -40,7 +41,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 
 
-@interface ObservableDictionaryTests : XCTestCase
+@interface ObservableDictionaryTests : EBNTestCase
 @end
 
 @implementation ObservableDictionaryTests
@@ -185,6 +186,34 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssertEqual(self->observerCallCount, 3, @"Observation block got called when it shouldn't have.");
 }
 
+- (void) testCopying
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableDictionary *sourceDictionary = [[EBNObservableDictionary alloc]
+			initWithObjects:objects forKeys:objects count:2];
+	NSDictionary *comparisonDictionary = [[NSDictionary alloc] initWithObjects:objects forKeys:objects count:2];
+
+	NSDictionary *destDictionary = [sourceDictionary copy];
+	XCTAssertEqualObjects(destDictionary, comparisonDictionary, @"Dictionary copy failed somehow");
+
+	NSMutableDictionary *mutableDestDictionary = [sourceDictionary mutableCopy];
+	XCTAssertEqualObjects(mutableDestDictionary, comparisonDictionary, @"Dictionary copy failed somehow");
+}
+
+- (void) testEncoding
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableDictionary *sourceDictionary = [[EBNObservableDictionary alloc]
+			initWithObjects:objects forKeys:objects count:2];
+	NSDictionary *comparisonDictionary = [[NSDictionary alloc] initWithObjects:objects forKeys:objects count:2];
+	
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:sourceDictionary];
+	XCTAssertNotNil(data, @"Encoding an observable dict appears to have failed");
+	
+	NSDictionary *rebuiltDictionary = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+	XCTAssertNotNil(rebuiltDictionary, @"Decoding an observable dictionary appears to have failed");
+	XCTAssertEqualObjects(rebuiltDictionary, comparisonDictionary, @"Dictionary coding failed somehow");
+}
 
 
 @end

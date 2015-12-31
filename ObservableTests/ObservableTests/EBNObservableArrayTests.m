@@ -12,6 +12,7 @@
 
 #import "EBNObservable.h"
 #import "EBNObservableCollections.h"
+#import "DebugUtils.h"
 
 
 // This punches the hole that allows us to force the observer notifications
@@ -39,7 +40,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 @end
 
-@interface ObservableArrayTests : XCTestCase
+@interface ObservableArrayTests : EBNTestCase
 
 @end
 
@@ -260,6 +261,34 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	[mao1.array replaceObjectAtIndex:0 withObject:@"object5"];
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
 	XCTAssertEqual(self->observerCallCount, 3, @"Observation block got called when it shouldn't.");
+}
+
+- (void) testCopying
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableArray *sourceArray = [[EBNObservableArray alloc] initWithObjects:objects count:2];
+
+	NSArray *destArray = [sourceArray copy];
+	XCTAssertEqualObjects(destArray[0], @1, @"Array copy failed somehow");
+	XCTAssertEqualObjects(destArray[1], @2, @"Array copy failed somehow");
+
+	NSMutableArray *mutableDestArray = [sourceArray mutableCopy];
+	XCTAssertEqualObjects(mutableDestArray[0], @1, @"Array copy failed somehow");
+	XCTAssertEqualObjects(mutableDestArray[1], @2, @"Array copy failed somehow");
+}
+
+- (void) testEncoding
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableArray *sourceArray = [[EBNObservableArray alloc] initWithObjects:objects count:2];
+	
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:sourceArray];
+	XCTAssertNotNil(data, @"Encoding an observable array appears to have failed");
+	
+	NSArray *rebuiltArray = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+	XCTAssertNotNil(rebuiltArray, @"Decoding an observable array appears to have failed");
+	XCTAssertEqualObjects(rebuiltArray[0], @1, @"Array coding failed somehow");
+	XCTAssertEqualObjects(rebuiltArray[1], @2, @"Array coding failed somehow");
 }
 
 @end

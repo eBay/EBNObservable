@@ -20,6 +20,8 @@
 
 >[When Observation Blocks Get Called][]
 
+>[Immediate Mode Observations][]
+
 >[What Observable Does While Observing][]
 
 >[Cleanup and Object Lifetime][]
@@ -233,6 +235,32 @@ If an ObservationBlock sets another property when it runs (in the same or a diff
 Your ObservationBlock will always be called on the main thread, even if the property is set in a background thread.
 
 If your block is observing a key path with more than one element, your block will get called when any element in the key path changes value. If, for example, you are observing the key path `currentUser.address.zipCode` but currentUser is initially nil, your observation block will get called when the currentUser gets set to a non-nil User, even if that user doesn't have an address. In this case, the zipCode has changed from nil to nil (or more correctly, from 'not reachable' to 'not reachable', because its containing object doesn't exist) but you get called anyway. Often you may not care about these changes, but sometimes you do.
+
+## Immediate Mode Observations ##
+
+Generally, having your observer blocks run at the end of the main thread's event loop is a good thing. It avoids issues where a value you are observing gets its value changed from a thread you weren't expecting. It avoids problems stemming from a value being changed thousands of times in quick succession, which in turn enables some really useful sorts of observations where you observe many properties with one observer block, and are called just once if all of the observed properties change at once.
+
+However, sometimes you really need to know what the previous value of a property was, or need to know immediately when a property changes value, or need to run code on the same thread where the change happened. Observable does have a way to create immediate observation blocks. They look like this:
+
+```C
+	// Step 1
+	EBNObservation *observation = [[EBNObservation alloc] initForObserved:modelObject
+			observer:self immedBlock:
+		^(ObservableTests *blockSelf, ModelObjectA *observed, id previousValue)
+		{
+			int prev = [previousValue intValue];
+			// Do something with previous value here
+		}];
+			
+	// Step 2
+	[observation observe:@"intProperty"];
+```
+
+This code first creates an observation object, giving it a target object to observe and a observer block as part of its initialization. Then in the second step we tell the observation object to begin observing on the key path @"intProperty".
+
+The observation block is a bit different in this case, as it takes an extra parameter. The previousValue will contain what value the property had before the change occurred. Since you can just get the current value from "modelObject.intProperty" there isn't a parameter for that.
+
+And again, remember that immediate mode observations can get called from any thread. They can get called from some thread when that thread is holding a lock that you don't know about. They can get called from multiple threads at once. If the value being observed changes thousands of times in quick succession, the observation block will get called thousands of times. If two immediate mode observations change each other's observed property from inside their observer blocks, you'll infinitely recurse. Regular observation blocks protect against all of these things, so use them whenever you can.
 
 ## What Observable Does While Observing ##
 
@@ -508,9 +536,7 @@ If you have a mutable collection in your class and you want it exposed publicly 
 	}
 ``` 
 
-However, the public property isn't observable and it creates a new copy of aMutableDictionary every time the public dictionary is requested. Okay, so the creating a new copy thing isn't really a performance issue. It isn't.
-
-Still, using LazyLoader we can easily improve on this:
+However, the public property isn't observable. Well, you can observe it, but your observation won't get called when you want it to. It also creates a new copy of the dictionary every time the property is accessed. Copy-on-access in this fashion is generally not a performance nor a memory usage problem--but still. Using LazyLoader we can easily improve on this:
 
 ```C
 	// In the .m file: change our mutable property's type to EBNObservableDictionary
@@ -521,6 +547,8 @@ Still, using LazyLoader we can easily improve on this:
 ```
 
 And you're done. The aDictionary property will now be copied at most once per mutation performed on aMutableDictionary, and the public property is now properly observable--that is, observers of aDictionary will get called in response to aMutableDictionary being changed.
+
+What that SyntheticProperty declaration does is make it so that every time anything in aMutableDictionary changes, invalidate the cached NSDictionary kept in the ivar and re-calculate it the next time aDictionary is requested. If aDictionary is being observed, that re-calculation will happen immediately.
 
 ## Custom Loaders ##
 

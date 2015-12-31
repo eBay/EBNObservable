@@ -6,7 +6,7 @@
     Copyright (c) 2013-2014 eBay Software Foundation.
 */
 
-#import "DebugUtils.h"
+#import "EBNObservableInternal.h"
 #import "EBNObservableCollections.h"
 
 //
@@ -110,7 +110,7 @@
 {
 	if (self = [super init])
 	{
-		if (!(self->_dict = [[NSMutableDictionary alloc] init]))
+		if (!(_dict = [[NSMutableDictionary alloc] init]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -129,7 +129,7 @@
 {
 	if (self = [super init])
 	{
-		if (!(self->_dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
+		if (!(_dict = [[NSMutableDictionary alloc] initWithCapacity:numItems]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -148,7 +148,7 @@
 {
 	if (self = [super init])
 	{
-		if (!(self->_dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
+		if (!(_dict = [[NSMutableDictionary alloc] initWithObjects:objects forKeys:keys count:count]))
 		{
 			// If dict didn't get initialized, neither did we
 			self = nil;
@@ -164,7 +164,7 @@
 */
 - (NSUInteger) count
 {
-	return [self->_dict count];
+	return [_dict count];
 }
 
 /****************************************************************************************************
@@ -173,7 +173,7 @@
 */
 - (id) objectForKey:(id)aKey
 {
-	return [self->_dict objectForKey:aKey];
+	return [_dict objectForKey:aKey];
 }
 
 /****************************************************************************************************
@@ -182,7 +182,7 @@
 */
 - (NSEnumerator *) keyEnumerator
 {
-	return [self->_dict keyEnumerator];
+	return [_dict keyEnumerator];
 }
 
 #pragma mark NSDictionary Protocols
@@ -195,7 +195,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	NSDictionary *newDict = [[NSDictionary allocWithZone:zone] initWithDictionary:self->_dict];
+	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:_dict];
 	return newDict;
 }
 
@@ -206,7 +206,7 @@
 */
 - (id) mutableCopyWithZone:(NSZone *)zone
 {
-	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:self->_dict];
+	EBNObservableDictionary *newDict = [[EBNObservableDictionary allocWithZone:zone] initWithDictionary:_dict];
 	return newDict;
 }
 
@@ -220,7 +220,7 @@
 - (id) replacementObjectForCoder:(NSCoder *)aCoder
 {
 	EBNObservableArchiverProxy	*proxy = [[EBNObservableArchiverProxy alloc] init];
-	proxy.dict = self->_dict;
+	proxy.dict = _dict;
 	
 	return proxy;
 }
@@ -231,9 +231,9 @@
 	NSFastEnumeration protocol. Pass through to composed array.
 */
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
-		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len;
+		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len
 {
-	return [self->_dict countByEnumeratingWithState:state objects:buffer count:len];
+	return [_dict countByEnumeratingWithState:state objects:buffer count:len];
 }
 
 #pragma mark NSMutableDictionary Required Methods
@@ -247,9 +247,9 @@
 - (void)setObject:(id)newValue forKey:(id < NSCopying >)aKey
 {
 	// Get the previous value, and then set the new value
-	NSInteger prevCount = [self->_dict count];
-	id previousValue = [self->_dict objectForKey:aKey];
-	[self->_dict setObject:newValue forKey:aKey];
+	NSInteger prevCount = [_dict count];
+	id previousValue = [_dict objectForKey:aKey];
+	[_dict setObject:newValue forKey:aKey];
 	
 	// Keys that aren't strings aren't observable. Slightly unsafe as we have to assume
 	// keyObject is an NSObject subclass.
@@ -267,7 +267,7 @@
 	
 	// The count property may have changed; notify for it.
 	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
+			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[_dict count]]];
 }
 
 /****************************************************************************************************
@@ -277,9 +277,9 @@
 - (void) removeObjectForKey:(id)aKey
 {
 	// Get the previous value, and then set the new value
-	NSInteger prevCount = [self->_dict count];
-	id previousValue = [self->_dict objectForKey:aKey];
-	[self->_dict removeObjectForKey:aKey];
+	NSInteger prevCount = [_dict count];
+	id previousValue = [_dict objectForKey:aKey];
+	[_dict removeObjectForKey:aKey];
 	
 	// Keys that aren't strings aren't observable. Slightly unsafe as we have to assume
 	// keyObject is an NSObject subclass.
@@ -297,7 +297,7 @@
 	
 	// The count property may have changed; notify for it.
 	[self ebn_manuallyTriggerObserversForProperty:@"count" previousValue:
-			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[self->_dict count]]];
+			[NSNumber numberWithInteger:prevCount] newValue:[NSNumber numberWithInteger:[_dict count]]];
 }
 
 #pragma mark Keypaths
@@ -394,7 +394,7 @@
 	
 	This and init are the designated initializers for this class.
 */
-- (instancetype) initWithObjects:(const id [])objects count:(NSUInteger) count;
+- (instancetype) initWithObjects:(const id [])objects count:(NSUInteger) count
 {
 	if (self = [super init])
 	{
@@ -464,7 +464,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	NSSet *newSet = [[NSSet allocWithZone:zone] initWithSet:self->set];
+	EBNObservableSet *newSet = [[EBNObservableSet allocWithZone:zone] initWithSet:set];
 	return newSet;
 }
 
@@ -475,7 +475,7 @@
 */
 - (id) mutableCopyWithZone:(NSZone *)zone
 {
-	EBNObservableSet *newSet = [[EBNObservableSet allocWithZone:zone] initWithSet:self->set];
+	EBNObservableSet *newSet = [[EBNObservableSet allocWithZone:zone] initWithSet:set];
 	return newSet;
 }
 
@@ -489,7 +489,7 @@
 - (id) replacementObjectForCoder:(NSCoder *)aCoder
 {
 	EBNObservableArchiverProxy	*proxy = [[EBNObservableArchiverProxy alloc] init];
-	proxy.set = self->set;
+	proxy.set = set;
 	
 	return proxy;
 }
@@ -500,7 +500,7 @@
 	NSFastEnumeration protocol. Pass through to composed array.
 */
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
-		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len;
+		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len
 {
 	return [set countByEnumeratingWithState:state objects:buffer count:len];
 }
@@ -586,7 +586,7 @@
 		return nil;
 	
 	NSUInteger keyHash = (NSUInteger) [[key substringFromIndex:1] longLongValue];
-	for (id setObject in self->set)
+	for (id setObject in set)
 	{
 		if ([setObject hash] == keyHash)
 			return setObject;
@@ -747,7 +747,7 @@
 */
 - (id) copyWithZone:(NSZone *)zone
 {
-	NSArray *newArray = [[NSArray allocWithZone:zone] initWithArray:self->array];
+	EBNObservableArray *newArray = [[EBNObservableArray allocWithZone:zone] initWithArray:array];
 	return newArray;
 }
 
@@ -758,7 +758,7 @@
 */
 - (id) mutableCopyWithZone:(NSZone *)zone
 {
-	EBNObservableArray *newArray = [[EBNObservableArray allocWithZone:zone] initWithArray:self->array];
+	EBNObservableArray *newArray = [[EBNObservableArray allocWithZone:zone] initWithArray:array];
 	return newArray;
 }
 
@@ -772,7 +772,7 @@
 - (id) replacementObjectForCoder:(NSCoder *)aCoder
 {
 	EBNObservableArchiverProxy	*proxy = [[EBNObservableArchiverProxy alloc] init];
-	proxy.array = self->array;
+	proxy.array = array;
 	
 	return proxy;
 }
@@ -783,7 +783,7 @@
 	NSFastEnumeration protocol. Pass through to composed array.
 */
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
-		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len;
+		objects:(id __unsafe_unretained [])buffer count:(NSUInteger)len
 {
 	return [array countByEnumeratingWithState:state objects:buffer count:len];
 }
@@ -1153,7 +1153,7 @@
 	{
 		@synchronized(EBNObservableSynchronizationToken)
 		{
-			for (NSString *propertyKey in [self->_observedMethods allKeys])
+			for (NSString *propertyKey in [_observedMethods allKeys])
 			{
 				[self ebn_removeKeypath:removeEntry atIndex:index forProperty:propertyKey];
 			}

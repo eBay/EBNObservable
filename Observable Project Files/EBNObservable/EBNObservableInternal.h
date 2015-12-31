@@ -9,8 +9,12 @@
 	Client code shouldn't need it; this includes EBNObservable subclasses.
 */
 
-
+#import "DebugUtils.h"
 #import "EBNObservable.h"
+
+#if defined(__cplusplus) || defined(c_plusplus)
+	extern "C" {
+#endif
 
 /**
 	Used to track the shadow classes we create. Shadow classes are private subclasses of observed classes,
@@ -152,14 +156,17 @@ extern BOOL ebn_WarnOnMultipleObservations;
 	// Don't call these methods unless you have a good reason.
 - (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName;
 + (SEL) ebn_selectorForPropertyGetter:(NSString *) propertyName;
-- (Class) ebn_prepareToObserveProperty:(NSString *)propertyName isSetter:(BOOL) isSetter;
+- (Class) ebn_prepareToObserveProperty:(NSString *)propertyName isSetter:(BOOL) isSetter
+		alreadyPrepared:(BOOL *) alreadyPrepared;
 
 @end
 
 
-// This describes a single observation block. There is one of these for each observationBlock,
-// and much of the coalescing that takes place is actually unioning sets of these objects.
-// Note that this object does *not* know the keypath(s) that it's observing.
+/**
+	This describes a single observation block. There is one of these for each observationBlock,
+	and much of the coalescing that takes place is actually unioning sets of these objects.
+	Note that this object does *not* know the keypath(s) that it's observing.
+*/
 @interface EBNObservation ()
 {
 
@@ -182,6 +189,9 @@ extern BOOL ebn_WarnOnMultipleObservations;
 }
 
 @end
+
+/// This method dumps all methods that have been set up for observation in all classes
+NSString *ebn_debug_DumpAllObservedMethods(void);
 
 /****************************************************************************************************
 	DEBUG_BREAKPOINT
@@ -240,4 +250,8 @@ extern BOOL ebn_WarnOnMultipleObservations;
 	#define DEBUG_BREAKPOINT
 #endif
 
+
+#if defined(__cplusplus) || defined(c_plusplus)
+	}
+#endif
 

@@ -21,7 +21,6 @@
 #import <CoreGraphics/CGGeometry.h>
 #import <objc/message.h>
 
-#import "DebugUtils.h"
 #import "EBNLazyLoader.h"
 #import "EBNObservableInternal.h"
 
@@ -369,12 +368,20 @@ template<typename T> void overrideGetterMethod(NSString *propName, Method getter
 	The bulk of this method is a switch statement that switches on the type of the property (parsed
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideGetterMethod<>() to create a new method and swizzle it in.
+	
+	returns TRUE if we've successfully swizzled, including the case where we had previously swizzled
+	this property and didn't have to do anything.
 */
 - (BOOL) ebn_swizzleImplementationForGetter:(NSString *) propertyName customLoader:(SEL) loader
 {
-	Class classToModify = [self ebn_prepareToObserveProperty:propertyName isSetter:NO];
+	BOOL alreadyPrepared;
+	
+	// Determine what class, if any, should house the overridden getter, making such a class
+	// if necessary.
+	Class classToModify = [self ebn_prepareToObserveProperty:propertyName isSetter:NO
+			alreadyPrepared:&alreadyPrepared];
 	if (!classToModify)
-		return YES;
+		return alreadyPrepared;
 
 	// Get the method selector for the getter on this property
 	SEL getterSelector = [[self class] ebn_selectorForPropertyGetter:propertyName];

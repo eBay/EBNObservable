@@ -112,6 +112,11 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 	/// by LazyLoader to invalidate some other property when the observed property changes value.
 @property (assign) BOOL					isForLazyLoader;
 
+	/// Causes an immediate debug break when any of the properties this observation is observing change.
+	/// This is very useful when an observation that's observing a list of properties is firing unexpectedly, and you
+	/// need to figure out which property is being changed, and by whom.
+@property (assign) BOOL					debugBreakOnChange;
+
 /**
 	Initializes a EBNObservation, for use with the given observed and observer objects.
 

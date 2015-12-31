@@ -7,13 +7,24 @@
 	
 	This file replaces a few macros eBay uses internally with stubs that will let us
 	easily transport the bulk of the code in and out of eBay projects.
+	
+	Everything declared in this file is also declared in eBay codebases, but is implemented
+	differently there.
 */
 
 
 #import <Foundation/Foundation.h>
 
+/// Ebay has a subclass of XCTestCase that does some extra stuff; here we just define it to
+/// XCTestCase to make the rest of the Observable codebase easy to copy back and forth
+#define EBNTestCase XCTestCase
+
+/// Unit tests use this to ensure the code asserts where it's supposed to.
+#define EBAssertAsserts(expression, ...) \
+    _XCTPrimitiveAssertThrows(self, expression, @#expression, __VA_ARGS__)
+
 // Chintzy. Replace with more normal asserts in your app.
-// I'm using a throw here so we can unit-test it using XCTAssertThrows().
+// I'm using a throw here so we can unit-test it using EBAssertAsserts().
 #define EBAssert(testValue, format, ...) \
 ({ \
 	if (!(testValue)) \

@@ -6,8 +6,6 @@
     Copyright (c) 2013-2014 eBay Software Foundation.
 */
 
-#import "EBNObservableInternal.h"
-
 /**
 	A mutable dictionary whose keys can be observed. Acts as a NSMutableDictionary. Allows observations
 	to be created on dictionary keys, as if they were properties. This includes using keypaths

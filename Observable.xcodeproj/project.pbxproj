@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EA0A224F1C336B11008578EF /* EBNLazyLoaderTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */; };
+		EA0A22501C336B11008578EF /* EBNObservableArrayTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */; };
+		EA0A22511C336B11008578EF /* EBNObservableDictionaryTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */; };
+		EA0A22521C336B11008578EF /* EBNObservableSetTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */; };
+		EA0A22531C336B11008578EF /* EBNObservableTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224D1C336B11008578EF /* EBNObservableTests.m */; };
+		EA0A22541C336B11008578EF /* ObservableSwiftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */; };
 		EA186E70193D8D97008A0A7B /* EBNLazyLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA186E68193D8D97008A0A7B /* EBNLazyLoader.mm */; };
 		EA186E71193D8D97008A0A7B /* EBNObservable.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA186E6A193D8D97008A0A7B /* EBNObservable.mm */; };
 		EA186E72193D8D97008A0A7B /* EBNObservableCollections.m in Sources */ = {isa = PBXBuildFile; fileRef = EA186E6C193D8D97008A0A7B /* EBNObservableCollections.m */; };
@@ -19,16 +25,11 @@
 		EA5B6C5C17D08FA60077F905 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA5B6C4117D08FA60077F905 /* Foundation.framework */; };
 		EA5B6C5D17D08FA60077F905 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA5B6C4517D08FA60077F905 /* UIKit.framework */; };
 		EA5B6C6517D08FA60077F905 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = EA5B6C6317D08FA60077F905 /* InfoPlist.strings */; };
-		EA5B6C6717D08FA60077F905 /* ObservableTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA5B6C6617D08FA60077F905 /* ObservableTests.m */; };
-		EA5DE0D919238D900088FD13 /* ObservableDictionaryTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA5DE0D819238D900088FD13 /* ObservableDictionaryTests.m */; };
 		EA63E94F198AFAFE0067C917 /* ModelObjects.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E948198AFAFD0067C917 /* ModelObjects.m */; };
 		EA63E950198AFAFE0067C917 /* SubViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E94A198AFAFD0067C917 /* SubViewController.m */; };
 		EA63E951198AFAFE0067C917 /* SubViewController.xib in Resources */ = {isa = PBXBuildFile; fileRef = EA63E94B198AFAFD0067C917 /* SubViewController.xib */; };
 		EA63E952198AFAFE0067C917 /* TestWindowViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E94D198AFAFE0067C917 /* TestWindowViewController.m */; };
 		EA63E953198AFAFE0067C917 /* TestWindowViewController.xib in Resources */ = {isa = PBXBuildFile; fileRef = EA63E94E198AFAFE0067C917 /* TestWindowViewController.xib */; };
-		EA94689B19340E1F009473C4 /* ObservableSetTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA94689A19340E1F009473C4 /* ObservableSetTests.m */; };
-		EA9468A219396D05009473C4 /* ObservableArrayTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA9468A119396D05009473C4 /* ObservableArrayTests.m */; };
-		EAC888C11912C77500C5BA1B /* LazyLoaderTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAC888C01912C77500C5BA1B /* LazyLoaderTests.m */; };
 		EAFF2B391903D0CA0022C704 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = EAFF2B321903D0CA0022C704 /* AppDelegate.m */; };
 		EAFF2B3A1903D0CA0022C704 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = EAFF2B331903D0CA0022C704 /* InfoPlist.strings */; };
 		EAFF2B3B1903D0CA0022C704 /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EAFF2B351903D0CA0022C704 /* Images.xcassets */; };
@@ -46,6 +47,13 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNLazyLoaderTests.m; path = ObservableTests/EBNLazyLoaderTests.m; sourceTree = "<group>"; };
+		EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableArrayTests.m; path = ObservableTests/EBNObservableArrayTests.m; sourceTree = "<group>"; };
+		EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableDictionaryTests.m; path = ObservableTests/EBNObservableDictionaryTests.m; sourceTree = "<group>"; };
+		EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableSetTests.m; path = ObservableTests/EBNObservableSetTests.m; sourceTree = "<group>"; };
+		EA0A224D1C336B11008578EF /* EBNObservableTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableTests.m; path = ObservableTests/EBNObservableTests.m; sourceTree = "<group>"; };
+		EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ObservableSwiftTests.swift; path = ObservableTests/ObservableSwiftTests.swift; sourceTree = "<group>"; };
+		EA0A22551C336B1E008578EF /* ObservableTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "ObservableTests-Bridging-Header.h"; path = "ObservableTests/ObservableTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		EA186E67193D8D97008A0A7B /* EBNLazyLoader.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNLazyLoader.h; sourceTree = "<group>"; };
 		EA186E68193D8D97008A0A7B /* EBNLazyLoader.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = EBNLazyLoader.mm; sourceTree = "<group>"; };
 		EA186E69193D8D97008A0A7B /* EBNObservable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservable.h; sourceTree = "<group>"; };
@@ -67,8 +75,6 @@
 		EA5B6C5A17D08FA60077F905 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		EA5B6C6217D08FA60077F905 /* ObservableTests-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ObservableTests-Info.plist"; sourceTree = "<group>"; };
 		EA5B6C6417D08FA60077F905 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
-		EA5B6C6617D08FA60077F905 /* ObservableTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ObservableTests.m; sourceTree = "<group>"; };
-		EA5DE0D819238D900088FD13 /* ObservableDictionaryTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = ObservableDictionaryTests.m; path = ObservableTests/ObservableDictionaryTests.m; sourceTree = SOURCE_ROOT; };
 		EA63E947198AFAFD0067C917 /* ModelObjects.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ModelObjects.h; sourceTree = "<group>"; };
 		EA63E948198AFAFD0067C917 /* ModelObjects.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ModelObjects.m; sourceTree = "<group>"; };
 		EA63E949198AFAFD0067C917 /* SubViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SubViewController.h; sourceTree = "<group>"; };
@@ -77,9 +83,6 @@
 		EA63E94C198AFAFD0067C917 /* TestWindowViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TestWindowViewController.h; sourceTree = "<group>"; };
 		EA63E94D198AFAFE0067C917 /* TestWindowViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TestWindowViewController.m; sourceTree = "<group>"; };
 		EA63E94E198AFAFE0067C917 /* TestWindowViewController.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = TestWindowViewController.xib; sourceTree = "<group>"; };
-		EA94689A19340E1F009473C4 /* ObservableSetTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ObservableSetTests.m; sourceTree = "<group>"; };
-		EA9468A119396D05009473C4 /* ObservableArrayTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ObservableArrayTests.m; sourceTree = "<group>"; };
-		EAC888C01912C77500C5BA1B /* LazyLoaderTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LazyLoaderTests.m; sourceTree = "<group>"; };
 		EAFF2B311903D0CA0022C704 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		EAFF2B321903D0CA0022C704 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
 		EAFF2B341903D0CA0022C704 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -175,11 +178,13 @@
 		EA5B6C6017D08FA60077F905 /* ObservableTests */ = {
 			isa = PBXGroup;
 			children = (
-				EA5B6C6617D08FA60077F905 /* ObservableTests.m */,
-				EA5DE0D819238D900088FD13 /* ObservableDictionaryTests.m */,
-				EA94689A19340E1F009473C4 /* ObservableSetTests.m */,
-				EA9468A119396D05009473C4 /* ObservableArrayTests.m */,
-				EAC888C01912C77500C5BA1B /* LazyLoaderTests.m */,
+				EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */,
+				EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */,
+				EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */,
+				EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */,
+				EA0A224D1C336B11008578EF /* EBNObservableTests.m */,
+				EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */,
+				EA0A22551C336B1E008578EF /* ObservableTests-Bridging-Header.h */,
 				EA5B6C6117D08FA60077F905 /* Supporting Files */,
 			);
 			path = ObservableTests;
@@ -271,6 +276,7 @@
 		EA5B6C3617D08FA60077F905 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				LastSwiftUpdateCheck = 0710;
 				LastUpgradeCheck = 0500;
 				ORGANIZATIONNAME = "Chall Fry";
 				TargetAttributes = {
@@ -341,11 +347,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EA9468A219396D05009473C4 /* ObservableArrayTests.m in Sources */,
-				EAC888C11912C77500C5BA1B /* LazyLoaderTests.m in Sources */,
-				EA5DE0D919238D900088FD13 /* ObservableDictionaryTests.m in Sources */,
-				EA5B6C6717D08FA60077F905 /* ObservableTests.m in Sources */,
-				EA94689B19340E1F009473C4 /* ObservableSetTests.m in Sources */,
+				EA0A22541C336B11008578EF /* ObservableSwiftTests.swift in Sources */,
+				EA0A22511C336B11008578EF /* EBNObservableDictionaryTests.m in Sources */,
+				EA0A22501C336B11008578EF /* EBNObservableArrayTests.m in Sources */,
+				EA0A224F1C336B11008578EF /* EBNLazyLoaderTests.m in Sources */,
+				EA0A22521C336B11008578EF /* EBNObservableSetTests.m in Sources */,
+				EA0A22531C336B11008578EF /* EBNObservableTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,6 +486,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/Observable.app/Observable";
+				CLANG_ENABLE_MODULES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SDKROOT)/Developer/Library/Frameworks",
 					"$(inherited)",
@@ -491,7 +499,10 @@
 					"$(inherited)",
 				);
 				INFOPLIST_FILE = "ObservableTests/ObservableTests-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "ObservableTests/ObservableTests/ObservableTests-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;
 			};
@@ -501,6 +512,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/Observable.app/Observable";
+				CLANG_ENABLE_MODULES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SDKROOT)/Developer/Library/Frameworks",
 					"$(inherited)",
@@ -509,7 +521,9 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "Observable Project Files/App Shell/Observable-Prefix.pch";
 				INFOPLIST_FILE = "ObservableTests/ObservableTests-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "ObservableTests/ObservableTests/ObservableTests-Bridging-Header.h";
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;
 			};

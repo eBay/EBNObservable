@@ -11,6 +11,7 @@
 @import CoreGraphics;
 @import XCTest;
 #import "EBNLazyLoader.h"
+#import "DebugUtils.h"
 
 // This punches the hole that allows us to force the observer notifications
 // instead of being dependent on the run loop. Asynchronous issues
@@ -65,18 +66,24 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 - (NSString *) fullName
 {
+	(void)_fullName; // silence the compiler
+	
 	self.numGetterCalls++;
 	return [NSString stringWithFormat:@"%@ %@", self.firstName, self.lastName];
 }
 
 - (int) intProp2
 {
+	(void)_intProp2; // silence the compiler
+
 	self.numGetterCalls++;
 	return self.intProp1;
 }
 
 - (CGSize) sizeProp1
 {
+	(void)_sizeProp1; // silence the compiler
+
 	self.numGetterCalls++;
 	CGSize ret = CGSizeMake(self.floatProp1, self.floatProp2);
 	return ret;
@@ -84,6 +91,8 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 - (CGPoint) pointProp1
 {
+	(void)_pointProp1; // silence the compiler
+
 	self.numGetterCalls++;
 	CGPoint ret = CGPointMake(self.floatProp3, self.floatProp4);
 	return ret;
@@ -91,6 +100,8 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 - (CGRect) rectProp1
 {
+	(void)_rectProp1; // silence the compiler
+
 	self.numGetterCalls++;
 	CGRect ret = CGRectMake(self.pointProp1.x, self.pointProp1.y, self.sizeProp1.width, self.sizeProp1.height);
 	return ret;
@@ -102,7 +113,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 
 
-@interface LazyLoaderTests : XCTestCase
+@interface LazyLoaderTests : EBNTestCase
 
 @end
 

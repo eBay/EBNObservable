@@ -6,8 +6,7 @@
     Copyright (c) 2013-2014 eBay Software Foundation.
 */
 
-#import "DebugUtils.h"
-#include <sys/sysctl.h>
+#import <sys/sysctl.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <UIKit/UIGeometry.h>
@@ -21,12 +20,19 @@ static void EBNOverrideDeallocForClass(Class shadowClass);
 static void ebn_shadowed_dealloc(__unsafe_unretained NSObject *self, SEL _cmd);
 static Class ebn_shadowed_ClassForCoder(id self, SEL _cmd);
 
+// This very special function gets template expanded into each type of property we know how to override.
+// This creates a function for bool properties, one for int properties, one for Obj-C objects, etc.
 template<typename T> void overrideSetterMethod(NSString *propName, Method setter, Method getter, Class classToModify);
-BOOL AmIBeingDebugged (void);
+
+// This is the function that gets installed in the run loop to call all the observer blocks that have been scheduled.
 extern "C"
 {
 	void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info);
 }
+
+// A debugging-support method, this tells us whether a debugger is attached.
+BOOL EBNAmIBeingDebugged(void);
+
 
 	// Keeping track of delayed blocks
 static NSMutableSet				*EBN_ObserverBlocksToRunAfterThisEvent;
@@ -38,14 +44,18 @@ static NSMutableArray 			*EBN_ObservedObjectBeingDrainedKeepAlive;
 	// This dictionary holds EBNShadowedClassInfo objects, and is keyed with Class objects
 NSMutableDictionary				*EBNBaseClassToShadowInfoTable;
 
-	// Not used for anything other than as a @synchronize token.
+	// Not used for anything other than as a @synchronize token. Currently is a pointer alias to
+	// EBN_ObserverBlocksToRunAfterThisEvent, but that could change.
 NSMutableSet					*EBNObservableSynchronizationToken;
 
-BOOL ebn_WarnOnMultipleObservations = true;
+	// Whether we should issue warnings when we see the same object observing the same keypath multiple times.
+BOOL 							ebn_WarnOnMultipleObservations = true;
 
-/***********************************************************************************/
 
 #pragma mark -
+/**
+	EBNKeypathEntryInfo is pretty much just a data struct; its only method is the debugging method below.
+*/
 @implementation EBNKeypathEntryInfo
 
 - (NSString *) debugDescription
@@ -57,9 +67,13 @@ BOOL ebn_WarnOnMultipleObservations = true;
 
 @end
 
-/***********************************************************************************/
-
 #pragma mark -
+/**
+	EBNShadowedClassInfo is also pretty much just a data struct; but it has a convenience initializer.
+	The purpose of these objects is to record the association between a class in the app (the 'base' class) 
+	and a runtime-created subclass (the 'shadow' class), as well as all the methods we've overridden in the
+	shadow class.
+*/
 @implementation EBNShadowedClassInfo
 
 - (instancetype) initWithBaseClass:(Class) baseClass shadowClass:(Class) newShadowClass
@@ -76,9 +90,8 @@ BOOL ebn_WarnOnMultipleObservations = true;
 @end
 
 #pragma mark -
-
 /**
-	EBNObservable used to be required base class for any class whose properties were observed. Now
+	EBNObservable used to be the required base class for any class whose properties were observed. Now
 	that any class can be observed, EBNObservable is still being kept around for continuity. 
 	
 	It does also provide a minor performance boost, as associated objects aren't required, but that's really minor.
@@ -426,7 +439,36 @@ BOOL ebn_WarnOnMultipleObservations = true;
 		if (!observerTable)
 			return;
 		
-		[self ebn_manuallyTriggerObserversForProperty:propertyName previousValue:prevValue newValue:newValue
+		// Execute all the LazyLoader blocks; this handles chained lazy properties--that is, cases where
+		// one lazy property depends on another lazy property. We should do this before calling
+		// immediate blocks, so that an immed block that references a lazy property will force a recompute.
+		
+		size_t numLazyLoaderBlocks = 0;
+		for (EBNKeypathEntryInfo *entry in observerTable)
+		{
+			EBNObservation *blockInfo = entry->_blockInfo;
+
+			if (blockInfo.isForLazyLoader)
+			{
+				// Make sure the observed object still exists before calling/scheduling blocks
+				NSObject *strongObserved = blockInfo->_weakObserved;
+				if (strongObserved)
+				{
+					// Execute any immediate blocks
+					if (blockInfo->_copiedImmedBlock)
+					{
+						[blockInfo executeWithPreviousValue:prevValue];
+					}
+				}
+				++numLazyLoaderBlocks;
+			}
+		}
+		
+		// If that was all the blocks, we're done. Return before we go eval the new value
+		if ([observerTable count] == numLazyLoaderBlocks)
+			return;
+
+	[self ebn_manuallyTriggerObserversForProperty:propertyName previousValue:prevValue newValue:newValue
 				copiedObserverTable:observerTable];
 	}
 }
@@ -559,6 +601,8 @@ BOOL ebn_WarnOnMultipleObservations = true;
 */
 + (void) load
 {
+	static CFRunLoopObserverRef runLoopObserver = NULL;
+	
 	// The dispatch_once is probably not necessary, as load is guaranteed to be called
 	// exactly once, and the base init is guaranteed to be called before subclass inits
 	// (therefore before subclasses can access the wrapper block queue).
@@ -567,9 +611,9 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	^{
 		// Set up our set of blocks to run at the end of each event
 		EBN_ObserverBlocksToRunAfterThisEvent = [[NSMutableSet alloc] init];
-		CFRunLoopObserverRef ref = CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, YES, 0,
+		runLoopObserver = CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, YES, 0,
 				EBN_RunLoopObserverCallBack, NULL);
-		CFRunLoopAddObserver(CFRunLoopGetMain(), ref, kCFRunLoopDefaultMode);
+		CFRunLoopAddObserver(CFRunLoopGetMain(), runLoopObserver, kCFRunLoopCommonModes);
 		
 		// EBN_ObserverBlocksToRunAfterThisEvent is created at initialization time, is
 		// never dealloc'ed, and is private to EBNObservable. This makes it a good candidate to use
@@ -990,7 +1034,7 @@ BOOL ebn_WarnOnMultipleObservations = true;
 + (SEL) ebn_selectorForPropertySetter:(NSString *) propertyName
 {
 	// If this is an actual declared property, get the property, then its property attributes string,
-	// then pull out the setter method from the string.
+	// then pull out the setter method from the string. Only finds custom setters, but must be done first.
 	const char *propName = [propertyName UTF8String];
 	objc_property_t prop = class_getProperty(self, propName);
 	if (prop)
@@ -1004,23 +1048,40 @@ BOOL ebn_WarnOnMultipleObservations = true;
 				return methodSel;
 			}
 		}
+		
+		// It's unclear from the docs whether a property publicly declared readonly but privately redeclared
+		// as readwrite would have the "R" encoding as part of its attributes. Since what we really want to know
+		// is whether a setter method exists, we're not looking for the (non) existance of the "R" attribute,
+		// as it's not clear the existance of the "R" attribute conclusively means the setters aren't there.
 	}
 	
-	// Even if it's not a declared property, we can still sometimes find the setter.
+	// For non-custom setter methods, and for non-properties, we need to guess the setter method.
 	// Try to guess the setter name by prepending "set" and uppercasing the first char of the propname
-	char setterName[200] = "_set";
-	strncpy(setterName + 4, propName, 190);
-	setterName[4] = toupper(setterName[4]);
-	strncat(setterName, ":", 1);
+	SEL foundMethodSelector = nil;
+	size_t destStrLen = strlen(propName);
+	if (destStrLen)
+	{
+		destStrLen += 10; // for prepending "_set" and appending ":"
+		char *setterName = (char *) malloc(destStrLen);
+		snprintf(setterName, destStrLen, "_set%c%s:", toupper(propName[0]), propName + 1);
+		
+		// Check for both "set..." and "_set..." variants
+		SEL methodSel = sel_registerName(setterName + 1);
+		if (methodSel && [self instancesRespondToSelector:methodSel])
+		{
+			foundMethodSelector = methodSel;
+		}
+		else
+		{
+			methodSel = sel_registerName(setterName);
+			if (methodSel && [self instancesRespondToSelector:methodSel])
+				foundMethodSelector = methodSel;
+		}
+		
+		free(setterName);
+	}
 	
-	SEL methodSel = sel_registerName(setterName + 1);
-	if (methodSel && [self instancesRespondToSelector:methodSel])
-		return methodSel;
-	methodSel = sel_registerName(setterName);
-	if (methodSel && [self instancesRespondToSelector:methodSel])
-		return methodSel;
-	
-	return nil;
+	return foundMethodSelector;
 }
 
 /****************************************************************************************************
@@ -1083,21 +1144,34 @@ BOOL ebn_WarnOnMultipleObservations = true;
 }
 
 /****************************************************************************************************
-	ebn_prepareToObserveProperty:isSetter:
+	ebn_prepareToObserveProperty:isSetter:alreadyPrepared
 	
 	This returns the class where we should add/replace getter and setter methods in order to 
 	implement observation.
 	
 	This class should be a runtime-created subclass of the given class. It could be a class created
-	by Apple's KVO, or one created by us.
+	by Apple's KVO, or one created by us. If this method returns nil, it means either no suitable
+	class exists and we can't observe this property, or we are already prepared to observe the
+	given property and don't need to do anything.
+	
+	You can optionally pass a BOOL pointer in the alreadyPrepared parameter; in the case where
+	the return value is nil this will tell you whether observation is going to work or not. 
+	Should always be NO if the method returns a non-nil value.
+	
+	This method early-returns in several places. Edit carefully!
 */
 - (Class) ebn_prepareToObserveProperty:(NSString *)propertyName isSetter:(BOOL) isSetter
+		alreadyPrepared:(BOOL *) alreadyPrepared
 {
 	//
 	Class curClass = object_getClass(self);
 	Class shadowClass;
 	EBNShadowedClassInfo *info = nil;
 	BOOL mustSetMethodImplementation = NO;
+	
+	// Assume we haven't already prepared this property for observation
+	if (alreadyPrepared)
+		*alreadyPrepared = NO;
 	
 	@synchronized (EBNBaseClassToShadowInfoTable)
 	{
@@ -1138,7 +1212,14 @@ BOOL ebn_WarnOnMultipleObservations = true;
 		if (!info)
 		{
 			// Check if we should make a new class
-				// 1. Do not make shadow classes for CF objects that are toll-free bridged.
+			
+				// 1. Do not make shadow classes for tagged pointers. Because that is not going
+				// to work at all.
+			uintptr_t value = (uintptr_t)(__bridge void *) self;
+			if (value & 0xF)
+				return nil;
+	
+				// 2. Do not make shadow classes for CF objects that are toll-free bridged.
 			NSString *className = NSStringFromClass(curClass);
 			if ([className hasPrefix:@"NSCF"] || [className hasPrefix:@"__NSCF"])
 			{
@@ -1147,8 +1228,6 @@ BOOL ebn_WarnOnMultipleObservations = true;
 				// You'll just submit a bug report about it, but the level of hacking required to make this work
 				// is incompatible with App Store apps.
 				EBLogContext(kLoggingContextOther, @"Properties of toll-free bridged CoreFoundation objects can't be observed.");
-				EBAssert(true, @"Unable to set up observation on property of object class %@; "
-						@"properties of toll-free bridged CoreFoundation objects can't be observed", className);
 				return nil;
 			}
 		
@@ -1232,6 +1311,8 @@ BOOL ebn_WarnOnMultipleObservations = true;
 			return nil;
 		
 		// Check to see if the getter/setter has been overridden in this class.
+		// We will only attempt to set the method implementation once. If it fails, we have recorded
+		// here that we we attempted it.
 		if (isSetter)
 		{
 			if (![info->_setters containsObject:propertyName])
@@ -1253,6 +1334,10 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	if (mustSetMethodImplementation)
 		return info->_shadowClass;
 	
+	// If we haven't early-returned before this point, it means we're already set up for observing this.
+	if (alreadyPrepared)
+		*alreadyPrepared = YES;
+	
 	return nil;
 }
 
@@ -1265,15 +1350,19 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	The bulk of this method is a switch statement that switches on the type of the property (parsed
 	from the string returned by method_getArgumentType()) and calls a templatized C++ function
 	called overrideSetterMethod<>() to create a new method and swizzle it in.
+	
+	Returns YES if we were able to swizzle the setter method. 
 */
 - (BOOL) ebn_swizzleImplementationForSetter:(NSString *) propName
 {
 	// This checks to see if we've made a subclass for observing, and if that subclass has
 	// an override for the setter method for the given property. It returns the class that we need
 	// to modify iff we need to override the setter.
-	Class classToModify = [self ebn_prepareToObserveProperty:propName isSetter:YES];
+	BOOL alreadyPrepared;
+	Class classToModify = [self ebn_prepareToObserveProperty:propName isSetter:YES
+			alreadyPrepared:&alreadyPrepared];
 	if (!classToModify)
-		return true;
+		return alreadyPrepared;
 	
 	// The setter doesn't need to be found, although we still return false.
 	// This is what will happen for readonly properties in a keypath.
@@ -1300,6 +1389,8 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	Method getterMethod = class_getInstanceMethod(classToModify, getterSelector);
 	EBAssert(getterMethod, @"Could not find getter method. Make sure class %@ has a method named %@.",
 			[self class], NSStringFromSelector(getterSelector));
+	if (!getterMethod)
+		return NO;
 		
 	char typeOfSetter[32];
 	method_getArgumentType(setterMethod, 2, typeOfSetter, 32);
@@ -1395,7 +1486,7 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	break;
 	}
 	
-	return true;
+	return YES;
 }
 
 #pragma mark Debugging KVO
@@ -1425,7 +1516,7 @@ BOOL ebn_WarnOnMultipleObservations = true;
 - (NSString *) debugBreakOnChange:(NSString *) keyPath line:(int) lineNum file:(const char *) filePath
 		func:(const char *) func
 {
-	if (!AmIBeingDebugged())
+	if (!EBNAmIBeingDebugged())
 		return @"No debugger detected or not debug build; debugBreakOnChange called but will not fire.";
 		
 	__block EBNObservation *ob = [[EBNObservation alloc] initForObserved:self observer:self immedBlock:
@@ -1498,13 +1589,17 @@ BOOL ebn_WarnOnMultipleObservations = true;
 	
 	return debugStr;
 }
+@end
 
 /****************************************************************************************************
-	debugDumpAllObservedMethods
+	ebn_debug_DumpAllObservedMethods
 	
 	Dumps the all observed classes and all the methods that are being observed.
+	
+	To use, in LLDB type:
+		po ebn_debug_DumpAllObservedMethods()
 */
-+ (NSString *) debugDumpAllObservedMethods
+NSString *ebn_debug_DumpAllObservedMethods(void)
 {
 	NSMutableString *dumpStr = [[NSMutableString alloc] initWithFormat:@"Observed Methods:\n"];
 	
@@ -1525,8 +1620,6 @@ BOOL ebn_WarnOnMultipleObservations = true;
 
 	return dumpStr;
 }
-
-@end
 
 /****************************************************************************************************
 	ebn_shadowed_ClassForCoder
@@ -1839,6 +1932,24 @@ template<typename T> void overrideSetterMethod(NSString *propName,
 					// Why not just call [blockSelf valueForKey:]? Immed blocks shouldn't be used much
 					// and we'd have to call valueForKey before setting the new value.
 					EBNObservation *blockInfo = entry->_blockInfo;
+
+					if (blockInfo.debugBreakOnChange)
+					{
+						if (EBNAmIBeingDebugged())
+						{
+							EBLogStdOut(@"debugBreakOnChange breakpoint on property: %@", propName);
+							if (blockInfo.debugString.length > 0)
+							{
+								EBLogStdOut(@"    debugString: %@", blockInfo.debugString);
+							}
+					
+							// This line will cause a break in the debugger! If you stop here in the debugger, it is
+							// because someone set the debugBreakOnChange property on an EBNObservation to YES, and
+							// one of the keypaths it is observing just changed.
+							DEBUG_BREAKPOINT;
+						}
+					}
+					
 					if (blockInfo->_copiedImmedBlock)
 					{
 						if (!immedBlocksToRun)
@@ -1946,19 +2057,23 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 }
 
 /****************************************************************************************************
-	AmIBeingDebugged()
+	EBNAmIBeingDebugged()
 	
-	AmIBeingDebugged calls sysctl() to see if a debugger is attached. Sample code courtesy Apple:
+	EBNAmIBeingDebugged calls sysctl() to see if a debugger is attached. Sample code courtesy Apple:
 		https://developer.apple.com/library/mac/qa/qa1361/_index.html
 
 	Because the struct kinfo_proc is marked unstable by Apple, we only use this code for Debug builds.
 	That means this method will return FALSE on release builds, even if a debugger *is* attached.
 */
-BOOL AmIBeingDebugged (void)
+BOOL EBNAmIBeingDebugged(void)
 {
 #if defined(DEBUG) && DEBUG
 	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid () };
-	struct kinfo_proc info = { 0 };
+
+	// xcode 7 appears not to like the = {0} initializer syntax here
+	struct kinfo_proc info;
+	
+	memset(&info, 0, sizeof(info));
 	size_t size = sizeof (info);
 	sysctl (mib, sizeof (mib) / sizeof (*mib), &info, &size, NULL, 0);
 

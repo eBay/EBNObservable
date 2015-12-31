@@ -31,16 +31,15 @@
 - (void) property:(NSString *)propName observationStateIs:(BOOL)isBeingObserved
 {
 	if (isBeingObserved)
-		NSLog(@"Property %@ is being observed.", propName);
+		NSLog(@"<%p>: Property %@ is being observed.", self, propName);
 	else
-		NSLog(@"Property %@ is no longer being observed.", propName);
+		NSLog(@"<%p>: Property %@ is no longer being observed.", self, propName);
 }
 
 @end
 
 
 @implementation ModelObject2
-
 
 @end
 

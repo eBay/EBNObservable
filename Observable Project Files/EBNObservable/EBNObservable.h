@@ -374,7 +374,7 @@
 /**
 	In previous iterations of this code EBNObservable was the base class for observable objects and classes
 	that were not subclasses of EBNObservable could not be targets of observation. This class is being left in
-	for compatabliity reasons.
+	for compatibility reasons.
 */
 @interface EBNObservable : NSObject
 	

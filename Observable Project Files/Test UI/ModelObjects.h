@@ -15,8 +15,9 @@ struct BitfieldStruct
 	unsigned int field1 : 1;
 };
 
+typedef int (*fnType)(void);
 
-@interface ModelObject1 : EBNLazyLoader
+@interface ModelObject1 : NSObject
 
 @property unsigned int intProperty;
 @property unsigned int intProperty2;
@@ -32,7 +33,7 @@ struct BitfieldStruct
 @property (readonly) NSString *stringProperty3;
 
 
-@property int (* fnProperty)();
+@property (assign) fnType fnProperty;
 @end
 
 @interface ModelObject3 : NSObject

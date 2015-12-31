@@ -12,6 +12,7 @@
 
 #import "EBNObservable.h"
 #import "EBNObservableCollections.h"
+#import "DebugUtils.h"
 
 // This punches the hole that allows us to force the observer notifications
 // instead of being dependent on the run loop. Asyncronous issues
@@ -41,7 +42,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 
 
 
-@interface ObservableSetTests : XCTestCase
+@interface ObservableSetTests : EBNTestCase
 
 @end
 
@@ -173,6 +174,34 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
 	XCTAssertEqual(self->observerCallCount, 3, @"Observation block got called when it shouldn't have.");
 }
+
+- (void) testCopying
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableSet *sourceSet = [[EBNObservableSet alloc] initWithObjects:objects count:2];
+	NSSet *comparisonSet = [[NSSet alloc] initWithObjects:objects count:2];
+
+	NSSet *destSet = [sourceSet copy];
+	XCTAssertEqualObjects(destSet, comparisonSet, @"Set copy failed somehow");
+
+	NSMutableSet *mutableDestSet = [sourceSet mutableCopy];
+	XCTAssertEqualObjects(mutableDestSet, comparisonSet, @"Set copy failed somehow");
+}
+
+- (void) testEncoding
+{
+	NSNumber *objects[] = { @1, @2 };
+	EBNObservableSet *sourceSet = [[EBNObservableSet alloc] initWithObjects:objects count:2];
+	NSSet *comparisonSet = [[NSSet alloc] initWithObjects:objects count:2];
+	
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:sourceSet];
+	XCTAssertNotNil(data, @"Encoding an observable set appears to have failed");
+	
+	NSSet *rebuiltSet = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+	XCTAssertNotNil(rebuiltSet, @"Decoding an observable set appears to have failed");
+	XCTAssertEqualObjects(rebuiltSet, comparisonSet, @"Set coding failed somehow");
+}
+
 
 
 @end

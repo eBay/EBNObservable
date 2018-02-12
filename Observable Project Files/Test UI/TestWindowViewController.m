@@ -3,7 +3,7 @@
 	Observable
 	
     Created by Chall Fry on 9/9/13.
-    Copyright (c) 2013-2014 eBay Software Foundation.
+    Copyright (c) 2013-2018 eBay Software Foundation.
     
     A table view of tests that can be run to demonstrate Observable.
 */
@@ -167,8 +167,6 @@
 
 - (void) runPerfTest
 {
-	ebn_WarnOnMultipleObservations = false;
-
 	double startTime;
 	
 	ModelObject3 *model3 = [[ModelObject3 alloc] init];
@@ -248,8 +246,6 @@
 
 - (void) runMultithreadTortureTest
 {
-	ebn_WarnOnMultipleObservations = false;
-
 	modelObj4 = [[ModelObject4 alloc] init];
 	runningTortureTest = YES;
 	

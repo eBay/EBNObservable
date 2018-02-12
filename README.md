@@ -2,10 +2,10 @@
 
 
 ---
-Observable is a simple way to get notified about changes to properties of other objects. At it's simplest, you can write code like:
+Observable is a simple way to get notified about changes to properties of other objects. At its simplest, you can write code like:
 
 ```C
-	ObserveProperty(modelObject, aStringProperty, { myLabel.text = modelObject.aStringProperty; });
+	Observe(ValidatePaths(modelObject, aStringProperty) { myLabel.text = modelObject.aStringProperty; });
 ```
 and your label's text will update whenever the model object's string property changes. 
 Observable is designed to be much easier to use than Apple's KVO. It's also much easier to debug and about as lightweight.
@@ -15,7 +15,7 @@ Observable is much less finicky than Apple's KVO implementation; deallocing an o
 Plus, Observable has a LazyLoader subclass that lets you create lazily loaded computed properties and declare a list of dependent properties that cause the computed property to invalidate its value.
 
 ## Audience ##
-iOS developers, although the code could pretty easily be ported to Mac OS X. Observable requires iOS 6 and ARC.
+iOS developers, although the code could pretty easily be ported to Mac OS X. Observable requires iOS 9 and ARC.
 
 More specifically, Observable is for people looking for a better way to hook up their model objects to controllers, and have become frustrated with Apple's KVO.
 

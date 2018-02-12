@@ -3,7 +3,7 @@
 	Observable
 	
     Created by Chall Fry on 4/19/14.
-    Copyright (c) 2013-2014 eBay Software Foundation.
+    Copyright (c) 2013-2018 eBay Software Foundation.
 
     Unit tests.
 */
@@ -12,6 +12,7 @@
 
 #import "EBNObservable.h"
 #import "EBNObservableInternal.h"
+#import "EBNObservableUnitTestSupport.h"
 
 // This punches the hole that allows us to force the observer notifications
 // instead of being dependent on the run loop. Asyncronous issues
@@ -56,6 +57,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 @property (assign) CGSize				sizeProperty;
 @property (assign) CGRect				rectProperty;
 @property (assign) NSRange				rangeProperty;
+@property (assign) UIEdgeInsets			uiEdgeInsetsProperty;
 @property (assign) void					*voidPtrProperty;
 
 @property NSString						*stringProperty1;
@@ -156,6 +158,12 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	_intProperty = newValue;
 }
 
+	// Custom method that sets the ivar backing modelObjectCProperty directly
+- (void) customModelObjectCSetter:(ModelObjectC *) moC
+{
+	_modelObjectCProperty = moC;
+}
+
 @end
 
 
@@ -191,7 +199,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 // -----------------------------------------------------------------------------
 // Observable Tests
 // -----------------------------------------------------------------------------
-@interface ObservableTests : EBNTestCase
+@interface ObservableTests : XCTestCase
 {
 	// These are deliberately not properties.
 	ModelObjectA *moA;
@@ -233,6 +241,47 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 - (void) tearDown
 {
     [super tearDown];
+}
+
+// Most of this test is ensuring the macros actually compile. There's some asserts here to make sure they work,
+// but usually if the macros are broken it'll be a compile error.
+- (void) testMacros
+{
+	// It's important that Observe returns the EBNObservation it creates, so that schedule constructions like this work.
+	[Observe(ValidatePaths(moA, intProperty) { blockSelf.observerCallCount1++; }) schedule];
+	
+	[ObserveDebug(ValidatePaths(moA, intProperty, charProperty, ucharProperty, longProperty, doubleProperty)
+	{
+		blockSelf.observerCallCount1++;
+		_propValInBlock = observed.intProperty;
+	}) schedule];
+
+	// ValdiatePaths should work in the no-va_args case (compile, that is).
+	[Observe(ValidatePaths(moA) { blockSelf.observerCallCount1++; }) schedule];
+	
+	// ValdiatePaths should work in the multiple args case (compile, that is).
+	[Observe(ValidatePaths(moA, stringProperty1, floatProperty, longlongProperty) { blockSelf.observerCallCount1++; }) schedule];
+	
+	
+
+	moA.intProperty = 5;
+	
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(self.observerCallCount1, 4, @"Observation block got called wrong number of times.");
+	XCTAssertEqual(self.propValInBlock, 5, @"Property doesn't have the value it should.");
+	
+	StopObserving(moA);
+	
+	// Immed Macros
+	self.observerCallCount1 = 0;
+	[Observe(ValidatePaths(moA, intProperty)
+	{
+		blockSelf.observerCallCount1++;
+	}) makeImmediateMode];
+	
+	moA.intProperty = 6;
+	
+	XCTAssertEqual(self.observerCallCount1, 1, @"Observation block got called wrong number of times.");
 }
 
 - (void) testBasicObservation
@@ -288,8 +337,25 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	
 	moA.intProperty = 10;
 	
-	XCTAssertEqual(self.observerCallCount1, 1, @"Observation block got too many times.");
+	XCTAssertEqual(self.observerCallCount1, 1, @"Observation block got called too many times.");
 	XCTAssertEqual(self.propValInBlock, 6, @"Observation block got called with wrong value.");
+	
+	Observe(ValidatePaths(moA, doubleProperty)
+	{
+		blockSelf.observerCallCount2++;
+		blockSelf.propValInBlock = observed.doubleProperty;
+	});
+	
+	moA.doubleProperty = 4.0;
+	moA.doubleProperty = 5.0;
+	
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+
+	id test = (id) moA;
+	StopObserving(test);
+	
+	XCTAssertEqual(self.observerCallCount2, 1, @"Observation block got called too many times.");
+	XCTAssertEqual(self.propValInBlock, 5, @"Observation block got called with wrong value.");
 }
 
 - (void) testBasicObservationKeypathRemoval
@@ -381,7 +447,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 				stringValInBlock = [observed.modelObjectBProperty.modelObjectCProperty.stringProperty4 copy];
 			}];
 
-	NSLog(@"%@", [moA debugShowAllObservers]);
+	EBLogTest(@"%@", [moA debugShowAllObservers]);
 
 	moA.modelObjectBProperty.intProperty = 40;
 	moA.intProperty = 33;
@@ -445,9 +511,10 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	moA.rectProperty = CGRectMake(0, 0, 10, 10);
 	moA.voidPtrProperty = nil;
 	moA.rangeProperty = fakeRange;
+	moA.uiEdgeInsetsProperty = UIEdgeInsetsMake(1, 2, 3, 4);
 	
-	NSLog(@"moA Observed Properties: %@", [moA allObservedProperties]);
-	XCTAssertEqual([[moA allObservedProperties] count], 26, @"Not all properties appear to be obseved.");
+	EBLogTest(@"moA Observed Properties: %@", [moA allObservedProperties]);
+	XCTAssertEqual([[moA allObservedProperties] count], 1, @"Not all properties appear to be obseved.");
 	
 	XCTAssertEqual([moA numberOfObservers:@"stringProperty1"], 1, @"numberOfObservers doesn't say observed prop is observed.");
 
@@ -460,7 +527,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	EBNObservation *obs2 = [[EBNObservation alloc] initForObserved:moC observer:self block:incBlock];
 	
 	[obs2 observe:@"*"];
-	NSLog(@"moC Observed Properties: %@", [moC allObservedProperties]);
+	EBLogTest(@"moC Observed Properties: %@", [moC allObservedProperties]);
 	moC.protocolIntProperty = 77;
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
 
@@ -491,12 +558,39 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssertEqual(self.observerCallCount1, 3, @"Observation block got called wrong number of times.");
 }
 
+- (void) testObserveAllNonTerminal
+{
+	// ModelObjectB has several properties; only the b.modelObjectCProperty has a stringProperty4
+	ObservePropertyNoPropCheck(moA, modelObjectBProperty.*.stringProperty4,
+	{
+		blockSelf.observerCallCount1++;
+	});
+	
+	moA.modelObjectBProperty.intProperty = 44;
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(self.observerCallCount1, 1, @"Observation block got called wrong number of times.");
+
+	moA.modelObjectBProperty.stringProperty = @"aNewString";
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(self.observerCallCount1, 2, @"Observation block got called wrong number of times.");
+
+	moA.modelObjectBProperty.intProperty = 55;
+	moA.modelObjectBProperty.stringProperty = @"aNewerString";
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(self.observerCallCount1, 3, @"Observation block got called wrong number of times.");
+	
+	moA.modelObjectBProperty.modelObjectCProperty.stringProperty4 = @"Another String";
+	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
+	XCTAssertEqual(self.observerCallCount1, 4, @"Observation block got called wrong number of times.");
+
+}
+
 - (void) testCreateObserverBlock
 {
 	EBNObservation *blockInfo = NewObservationBlock(moA,
 	{
 		blockSelf.observerCallCount1++;
-		NSLog(@"Inside block.");
+		EBLogTest(@"Inside block.");
 	});
 	[blockInfo execute];
 	
@@ -545,6 +639,79 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssertTrue(tmpMOA.objectCWasDealloced, @"Observer didn't dealloc when it went out of scope.");
 }
 
+- (void) testProperBaseClass
+{
+    ModelObjectA *tmpMOA = [[ModelObjectA alloc] init];
+	Class baseClass = [[tmpMOA class] ebn_properBaseClass];
+	XCTAssertEqual(baseClass, [ModelObjectA class], @"ebn_properBaseClass isn't returning correct base class");
+	
+	// Now make our temp model object into an observable subclass
+	[tmpMOA tell:self when:@"intProperty" changes:^(ModelObjectC *blockObserver, ModelObjectA *blockObserved)
+			{
+				self.observerCallCount1++;
+			}];
+
+	Class actualClass = object_getClass(tmpMOA);
+	XCTAssertNotEqual(actualClass, [ModelObjectA class], @"ebn_properBaseClass isn't returning correct base class");
+
+	// Test both what -class returns, AND what object_getClass returns.
+	baseClass = [[tmpMOA class] ebn_properBaseClass];
+	XCTAssertEqual(baseClass, [ModelObjectA class], @"ebn_properBaseClass isn't returning correct base class");
+	baseClass = [actualClass ebn_properBaseClass];
+	XCTAssertEqual(baseClass, [ModelObjectA class], @"ebn_properBaseClass isn't returning correct base class");
+}
+
+- (void) testebnValueForKey
+{
+    ModelObjectA *tmpMOA = [[ModelObjectA alloc] init];
+	
+	NSNumber *num = [tmpMOA ebn_valueForKey:@"charProperty"];
+	XCTAssertEqual([num charValue], tmpMOA.charProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"ucharProperty"];
+	XCTAssertEqual([num charValue], tmpMOA.ucharProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"shortProperty"];
+	XCTAssertEqual([num shortValue], tmpMOA.shortProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"ushortProperty"];
+	XCTAssertEqual([num shortValue], tmpMOA.ushortProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"intProperty"];
+	XCTAssertEqual([num intValue], tmpMOA.intProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"uintProperty"];
+	XCTAssertEqual([num intValue], tmpMOA.uintProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"longProperty"];
+	XCTAssertEqual([num longValue], tmpMOA.longProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"ulongProperty"];
+	XCTAssertEqual([num longValue], tmpMOA.ulongProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"longlongProperty"];
+	XCTAssertEqual([num longLongValue], tmpMOA.ullProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"longlongProperty"];
+	XCTAssertEqual([num longLongValue], tmpMOA.ullProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"doubleProperty"];
+	XCTAssertEqual([num doubleValue], tmpMOA.doubleProperty, @"ebn_valueForKey failed");
+	num = [tmpMOA ebn_valueForKey:@"floatProperty"];
+	XCTAssertEqual([num floatValue], tmpMOA.floatProperty, @"ebn_valueForKey failed");
+
+	tmpMOA.classProperty = [self class];
+	Class testClassResult = [tmpMOA ebn_valueForKey:@"classProperty"];
+	XCTAssertEqual(testClassResult, tmpMOA.classProperty, @"ebn_valueForKey failed");
+
+	tmpMOA.selectorProperty = @selector(testebnValueForKey);
+	NSValue *testSELResult = [tmpMOA ebn_valueForKey:@"selectorProperty"];
+	XCTAssertEqual([testSELResult pointerValue], tmpMOA.selectorProperty, @"ebn_valueForKey failed");
+
+	tmpMOA.pointProperty = CGPointMake(33, 44);
+	NSValue *testPointResult = [tmpMOA ebn_valueForKey:@"pointProperty"];
+	XCTAssertEqual([testPointResult CGPointValue].x, tmpMOA.pointProperty.x, @"ebn_valueForKey failed");
+	XCTAssertEqual([testPointResult CGPointValue].y, tmpMOA.pointProperty.y, @"ebn_valueForKey failed");
+	
+	tmpMOA.voidPtrProperty = &tmpMOA;
+	NSValue *testPtrResult = [tmpMOA ebn_valueForKey:@"voidPtrProperty"];
+	XCTAssertEqual([testPtrResult pointerValue], tmpMOA.voidPtrProperty, @"ebn_valueForKey failed");
+
+	tmpMOA.stringProperty1= @"staticString";
+	NSString *testStringResult = [tmpMOA ebn_valueForKey:@"stringProperty1"];
+	XCTAssertEqualObjects(testStringResult, tmpMOA.stringProperty1, @"ebn_valueForKey failed");
+}
+
 - (void) testReadonlyProperty
 {
 	ObserveProperty(moA, modelObjectBProperty.readonlyProperty.stringProperty1,
@@ -581,16 +748,12 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	[moA stopTellingAboutChanges:self];
 	
 	// This makes a keypath that loops back around into the same property of the same object.
-	// Observable should assert when this happens.
-	_Pragma("clang diagnostic push")
-	_Pragma("clang diagnostic ignored \"-Wshadow\"")
-	EBAssertAsserts(ObserveProperty(moA, modelObjectBProperty.modelObjectCProperty.modelObjectAProperty.modelObjectBProperty,
+	ObserveProperty(moA, modelObjectBProperty.modelObjectCProperty.modelObjectAProperty.modelObjectBProperty,
 	{
 		blockSelf.observerCallCount1++;
-	}), @"Should have asserted.");
-	_Pragma("clang diagnostic pop")
+	});
 	
-	NSLog(@"%@", [moA debugShowAllObservers]);
+	EBLogTest(@"%@", [moA debugShowAllObservers]);
 }
 
 - (void) testChainedObservations
@@ -609,7 +772,10 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	
 	moA.intProperty = 5;
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
-	XCTAssertEqual(self.observerCallCount1, 2, @"Recursion guards not working.");
+	XCTAssertEqual(self.observerCallCount1, 1, @"Recursion guards not working.");
+	
+	StopObservingPath(moA, intProperty);
+	StopObservingPath(moA, boolProperty);
 }
 
 // This is where we have obj1.obj2.obj3 and obj2.obj3 as paths, where both pass through obj2.
@@ -672,6 +838,12 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssertEqual(observerCallCount, 1, @"Wrong number of calls to observer block.");
 	XCTAssertTrue(_appleKVOWasCalled, @"Apple KVO method wasn't called.");
 	
+	// Check the class hierarchy of the resulting object
+	XCTAssert(strcmp(object_getClassName(appleKVOFirst), "NSKVONotifying_ModelObjectA") == 0,
+			@"The actual class for this object should be KVO's subclass of the original object.");
+	XCTAssert(strcmp(class_getName(class_getSuperclass(object_getClass(appleKVOFirst))), "ModelObjectA") == 0,
+			@"Superclass of KVO's subclass should be the base object.");
+
 	observerCallCount = 0;
 
 	// This time we do Observable first, then Apple's KVO
@@ -713,12 +885,12 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssert(strcmp(class_getName([observableFirst class]), "NSKVONotifying_ModelObjectA"),
 			@"Class method returns wrong thing.");
 	
-		//
+		// propertyBaseClass exists to remediate this bug--it should return the correct base class
 	XCTAssertEqual([[observableFirst class] ebn_properBaseClass], [ModelObjectA class],
 			@"getProperBaseClass isn't returning the base class.");
 	
 	XCTAssert(strcmp(object_getClassName(observableFirst), "NSKVONotifying_ModelObjectA_EBNShadowClass") == 0,
-			@"The actual class for this object should be Observable's subclass of KVO's subclass of the original object.");
+			@"The actual class for this object should be KVO's subclass of Observable's subclass of the original object.");
 	XCTAssert(strcmp(class_getName(class_getSuperclass(object_getClass(observableFirst))), "ModelObjectA_EBNShadowClass") == 0,
 			@"Superclass of shadowclass should be Observable-created subclass.");
 	XCTAssertEqual(class_getSuperclass(class_getSuperclass(object_getClass(observableFirst))), [ModelObjectA class],
@@ -739,10 +911,8 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	moA.intProperty = 7;
 
 	EBNObservation *blockInfo = [[EBNObservation alloc] initForObserved:moA observer:self
-			immedBlock:^(ObservableTests *blockSelf, ModelObjectA *observed, id previousValue)
+			immedBlock:^(ObservableTests *blockSelf, ModelObjectA *observed)
 			{
-				int prev = [previousValue intValue];
-				XCTAssert(prev == 7, @"Block got told wrong value for previousValue.");
 				observerCallCount++;
 			}];
 			
@@ -757,7 +927,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	[moA stopTelling:self aboutChangesTo:@"intProperty"];
 	
 	blockInfo = [[EBNObservation alloc] initForObserved:moA observer:self
-			immedBlock:^(ObservableTests *blockSelf, ModelObjectA *observed, id previousValue)
+			immedBlock:^(ObservableTests *blockSelf, ModelObjectA *observed)
 			{
 				observerCallCount++;
 			}];
@@ -781,10 +951,11 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	moA.sizeProperty = CGSizeMake(55, 30);
 	moA.rectProperty = CGRectMake(5, 5, 10, 10);
 	moA.rangeProperty = fakeRange;
+	moA.uiEdgeInsetsProperty = UIEdgeInsetsMake(1, 2, 3, 4);
 	moA.voidPtrProperty = &fakeRange;
 
 	EBN_RunLoopObserverCallBack(nil, kCFRunLoopAfterWaiting, nil);
-	XCTAssertEqual(observerCallCount, 21, @"Wrong number of calls to observer block.");
+	XCTAssertEqual(observerCallCount, 22, @"Wrong number of calls to observer block.");
 }
 
 // Apple KVO observer. Verifies compatibility betweeen EBNObservable and KVO.
@@ -833,6 +1004,14 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	XCTAssert(_observerCallCount1 == 1, @"Wrong number of calls to observer block.");
 }
 
+- (void) testAllProperties
+{
+	ModelObjectA *moa = [[ModelObjectA alloc] init];
+
+	NSSet *props = [moa ebn_allProperties];
+	XCTAssertNotNil(props, @"ebn_allProperties my be borked");
+}
+
 - (void) testClassHiding
 {
 	ModelObjectA *moa = [[ModelObjectA alloc] init];
@@ -875,9 +1054,7 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 {
 	ModelObjectB *mob1 = [[ModelObjectB alloc] init];
 	
-	// This should throw an exception from valueForKey:, and then swallow the exception in
-	// ebn_valueForKey:
-	[mob1 ebn_valueForKey:@"not_a_model_objecdt_B_property"];
+	XCTAssertNoThrow([mob1 ebn_valueForKey:@"not_a_model_objecdt_B_property"], @"Unlike valueForKey:, this won't throw");
 }
 
 - (void) testDumpAllObservedMethods
@@ -885,6 +1062,29 @@ void EBN_RunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivit
 	NSString *string = ebn_debug_DumpAllObservedMethods();
 	XCTAssertNotNil(string, @"DebugDumpAllObservedMethods should return something readable");
 }
+
+- (void) testDebugShowAllObservers
+{
+	ModelObjectB *mob1 = [[ModelObjectB alloc] init];
+	ModelObjectC *mobC = [[ModelObjectC alloc] init];
+	
+	[mob1 tell:self when:@"modelObjectCProperty.stringProperty4" changes:^(ObservableTests *blockSelf, NSString *observed)
+	{
+		blockSelf.observerCallCount1++;
+	}];
+	
+	// Deliberately break observation by setting an ivar directly on a property under observation
+	[mob1 customModelObjectCSetter:mobC];
+	
+	NSString *debugStr = [mob1 debugShowAllObservers];
+	XCTAssertNotNil(debugStr, @"debugShowAllObservers shouldn't return a nil string.");
+	
+	// Note that we're using the existance of the WARNING substring as evidence that the debug method found
+	// the broken observation. This is dependent on how the debug method formats its strings.
+	XCTAssert([debugStr containsString:@"WARNING"],
+			@"debugShowAllObservers should catch and warn about the broken observation.");
+}
+
 
 @end
 

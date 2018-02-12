@@ -3,7 +3,7 @@
 	Observable
 	
     Created by Chall Fry on 9/27/13.
-    Copyright (c) 2013-2014 eBay Software Foundation.
+    Copyright (c) 2013-2018 eBay Software Foundation.
     
     These are demonstration model objects, here so that we can demonstrate Observable.	
 */
@@ -12,14 +12,10 @@
 
 @implementation ModelObject1
 
-- (instancetype) init
++ (void) initialize
 {
-	if (self = [super init])
-	{
-		SyntheticProperty(intProperty);
-		SyntheticProperty(intProperty2, stringProperty);
-	}
-	return self;
+	SyntheticProperty(ModelObject1, intProperty);
+	SyntheticProperty(ModelObject1, intProperty2, stringProperty);
 }
 
 

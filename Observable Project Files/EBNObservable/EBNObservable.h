@@ -3,12 +3,13 @@
 	Observable
 	
 	Created by Chall Fry on 8/18/13.
-    Copyright (c) 2013-2014 eBay Software Foundation.
+    Copyright (c) 2013-2018 eBay Software Foundation.
 	
 */
 
 #import <objc/runtime.h>
 #import "EBNObservation.h"
+#import "NSSet+EBNObservable.h"
 
 /**
 	This macro makes it easier to make self the observer of the given keypath rooted at the given
@@ -68,6 +69,116 @@
 })
 
 /**
+	Meant to be used in concert with the Observe macro and the ObserveDebug function, with a syntax like this:
+	
+	Observe(ValidatePaths(observedObj, keypathList, ...) { blockContents });
+	
+	Note that there is no comma after the ValidatePaths macro.
+	
+	This macro, along with Observe, is designed for easy switching between 'safe' mode where the contents 
+	of the observation block are checked for references to self, and 'debug' mode where breakpoints can be 
+	set in the block contents.
+	
+	If the only keypaths you want to observe will not pass validation (for example, keypaths containing a '*'
+	wildcard), you can leave the keypathList blank and add them later by saving the result of the Observe macro
+	and calling - observe: on it.
+	
+	@param observedObj   	The object at the root of the observation.
+	@param keypathList		A comma separated list of keypaths to observe. See description of ValidatePaths.
+							May be empty, although you must add keypaths later to actually observe anything.
+
+	@return Returns 4 comma-separated values, not meant for direct consumption. This macro is meant to be
+	composed into either Observe or ObserveDebug.
+*/
+#define ValidatePaths(observedObj, ...) \
+	( self ) , \
+	( observedObj ) , \
+({\
+	__attribute__((unused)) __typeof__(observedObj) __internalObserved = observedObj;\
+	EBNValidatePathsInternal(__VA_ARGS__)(__VA_ARGS__) \
+	@[EBNStringifyArgs(__VA_ARGS__)(__VA_ARGS__)]; \
+}), ^(__typeof__(self) blockSelf, __typeof__(observedObj) observed)
+
+/**
+	Meant to be used in concert with the Observe macro and the ObserveDebug function, with a syntax like this:
+
+	Observe(ValidateObserverPaths(observerObj, observedObj, keypathList, ...) { blockContents });
+	
+	This is similar to ValidatePaths, but lets you declare that the observer object isn't self.
+
+	Note that there is no comma after the ValidateObserverPaths macro.
+	
+	This macro, along with Observe, is designed for easy switching between 'safe' mode where the contents 
+	of the observation block are checked for references to self, and 'debug' mode where breakpoints can be 
+	set in the block contents.
+	
+	If the only keypaths you want to observe will not pass validation (for example, keypaths containing a '*'
+	wildcard), you can leave the keypathList blank and add them later by saving the result of the Observe macro
+	and calling - observe: on it.
+	
+	@param observerObj   	The object doing the observing.
+	@param observedObj   	The object at the root of the observation.
+	@param keypathList		A comma separated list of keypaths to observe. See description of ValidatePaths.
+							May be empty, although you must add keypaths later to actually observe anything.
+
+	@return Returns 4 comma-separated values, not meant for direct consumption. This macro is meant to be
+	composed into either Observe or ObserveDebug.
+*/
+#define ValidateObserverPaths(observerObj, observedObj, ...) \
+	( observerObj ) , \
+	( observedObj ) , \
+({\
+	__attribute__((unused)) __typeof__(observedObj) __internalObserved = observedObj;\
+	EBNValidatePathsInternal(__VA_ARGS__)(__VA_ARGS__) \
+	@[EBNStringifyArgs(__VA_ARGS__)(__VA_ARGS__)]; \
+}), ^(__typeof__(observerObj) observer, __typeof__(observedObj) observed)
+
+
+
+/**
+	Meant to be used in concert with ValidatePaths, with a syntax like this:
+	
+	Observe(ValidatePaths(observedObj, keypathList, ...) { blockContents });
+	
+	Note that there is no comma after the ValidatePaths macro.
+	
+	This macro is designed for easy switching between 'safe' mode where the contents of the observation block
+	are checked for references to self, and 'debug' mode where breakpoints can be set in the block contents.
+	
+	To switch, change the name from "Observe" to "ObserveDebug". ObserveDebug is actually a function, defined in 
+	EBNObservation.m.
+	
+	@param observedObj   	The object at the root of the observation.
+	@param keypathList		A comma separated list of keypaths to observe. See description of ValidatePaths.
+							May be empty, although you must add keypaths later to actually observe anything.
+	@param blockContents 	The contents of a block to be run in response to changes to the value in keyPath. Does not
+
+	@return Returns a EBNObservation object describing the newly-created observation.
+*/
+#define Observe(paramBundle) \
+({\
+	EBNINTERNAL_ArgumentExpander(paramBundle) \
+	EBNValidateObservationBlock(__internalObserver, __internalObserved2, EBNINTERNAL_Indirector(EBNINTERNAL_ArgumentDestructor_ ## paramBundle)); \
+	EBNObservation *__internalObservation = [[EBNObservation alloc] initForObserved:__internalObserved2 observer:__internalObserver \
+			block:__internalBlock]; \
+	[__internalObservation observeMultiple:__internalKeypathArray]; \
+	__internalObservation; \
+})
+
+/**
+	Validates the keypath strings in the argument list are valid keypaths when evaluated from rootObject.
+	For a keypath of "a.b.c", rootObject must have a property of "a", which must in turn have a property "b".
+	What it actually does internally is to declare unused variables for each keypath--that is it makes a variable
+	equal to rootObject.a.b.c, and sees if it compiles.
+*/
+#define EBNValidatePaths(rootObject, ...) \
+({ \
+	__attribute__((unused)) __typeof__(rootObject) __internalObserved = rootObject; \
+	EBNValidatePathsInternal(__VA_ARGS__)(__VA_ARGS__) \
+	EBNStringifyArgs(__VA_ARGS__)(__VA_ARGS__); \
+})
+
+/**
 	This macro wraps the stopTelling:aboutChangesTo: method, performing the same sort of checks on the 
 	keypath that the ObserveProperty macro does. Only usable when 'self' is the observer, which is the common case.
 
@@ -97,8 +208,11 @@
  */
 #define StopObserving(observedObj) \
 ({\
-	__typeof__(observedObj) __internalObserved = observedObj; \
-	[__internalObserved stopTellingAboutChanges:self]; \
+	if ([observedObj isKindOfClass:[NSObject class]]) \
+	{ \
+		NSObject *__internalObserved = (NSObject *) observedObj; \
+		[__internalObserved stopTellingAboutChanges:self]; \
+	} \
 })
 
 /**
@@ -139,8 +253,9 @@
 	@param callBlock A block that gets called when the value changes.
 
 	@return An EBNObservation object describing the created observation.
- */
-- (EBNObservation *) tell:(id) observer when:(NSString *) keyPath changes:(ObservationBlock) callBlock;
+*/
+- (nullable EBNObservation *) tell:(nonnull id) observer when:(nonnull NSString *) keyPath
+		changes:(nonnull ObservationBlock) callBlock;
 
 /**
 	Creates a new observation. Receiver should be the object being observed. In the common case where the caller
@@ -156,20 +271,22 @@
 
 
 	@param observer  The object that should receive change notifications. Cannot be nil.
-	@param keyPaths  A period separated string of property names, specifying a series of properties starting from the receiver
+	@param propertyList  An array of keyPaths, where each key path is a period separated string of property names,
+			specifying a series of properties starting from the receiver
 	@param callBlock A block that gets called when the value changes.
 
 	@return An EBNObservation object describing the created observation.
- */
-- (EBNObservation *) tell:(id) observer whenAny:(NSArray *) propertyList changes:(ObservationBlock) callBlock;
+*/
+- (nullable EBNObservation *) tell:(nonnull id) observer whenAny:(nonnull NSArray<NSString *> *) propertyList
+		changes:(nonnull ObservationBlock) callBlock;
 
 /**
 	The receiver will iterate through all observations rooted on self, and remove any observations whose observer
 	object is equal to observer.
 
 	@param observer The object that registered as an observer in a tell: method
- */
-- (void) stopTellingAboutChanges:(id) observer;
+*/
+- (void) stopTellingAboutChanges:(nonnull id) observer;
 
 /**
 	The receiver iterates through all observations rooted on self and active on the given keyPath, 
@@ -177,8 +294,8 @@
 
 	@param observer     The object that (presumably) registered as an observer in a tell: method.
 	@param keyPath 		The keypath to remove observations from.
- */
-- (void) stopTelling:(id) observer aboutChangesTo:(NSString *) keyPath;
+*/
+- (void) stopTelling:(nonnull id) observer aboutChangesTo:(nonnull NSString *) keyPath;
 
 /**
 	Calls stopTelling:aboutChangesTo: for each item in the pathList array.
@@ -186,22 +303,22 @@
 	@param observer The object that had been doing the observing
 	@param pathList An array of keypath strings.
 */
-- (void) stopTelling:(id) observer aboutChangesToArray:(NSArray *) pathList;
+- (void) stopTelling:(nonnull id) observer aboutChangesToArray:(nonnull NSArray<NSString *> *) pathList;
 
 /**
-	The receiver iterates through all observations rooted on serlf, and will remove any observations whose
+	The receiver iterates through all observations rooted on self, and will remove any observations whose
 	ObservationBlock is equal to block.
 
 	@param block A block that (presumably) had been earlier passed into a tell: method on this object
 */
-- (void) stopAllCallsTo:(ObservationBlock) block;
+- (void) stopAllCallsTo:(nullable ObservationBlock) block;
 
 /**
 	Returns all properties currently being observed on the receiver, as an array of strings.
 
 	@return an array of strings
  */
-- (NSArray *) allObservedProperties;
+- (nullable NSArray<NSString *> *) allObservedProperties;
 
 /**
 	Returns how many observers there are for the given property
@@ -210,8 +327,28 @@
 
 	@return The number of observers of that property
  */
-- (NSUInteger) numberOfObservers:(NSString *) propertyName;
+- (NSUInteger) numberOfObservers:(nonnull NSString *) propertyName;
 
+
+/**
+	Triggers observers, lazyloading evaluation, keypath updating, and other upkeep on the property at the
+	END of the path	as if that property's setter had been called.
+	
+	If any value in the keyPath besides the last is nil, does nothing.
+*/
+- (void) ebn_manuallyTriggerObserversForPath:(nonnull NSString *) keyPath previousValue:(nullable id) prevValue;
+
+/**
+	Triggers observers, lazyloading evaluation, keypath updating, and other upkeep on the property at the
+	END of the path	as if that property's setter had been called.
+	
+	If any value in the keyPath besides the last is nil, does nothing.
+	
+	Functionally, this method walks the values in the keypath to get to the terminal property, and then
+	calls manuallyTriggerObserversForProperty: on that property.
+*/
+- (void) ebn_manuallyTriggerObserversForPath:(nonnull NSString *) keyPath previousValue:(nullable id) prevValue
+		newValue:(nullable id) newValue;
 
 /**
 	For manually triggering observers. EBNObervable subclasses can use this if they
@@ -230,7 +367,7 @@
 	@param propertyName The property that changed value
 	@param prevValue    The value the property had before the change.
  */
-- (void) ebn_manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue;
+- (void) ebn_manuallyTriggerObserversForProperty:(nonnull NSString *) propertyName previousValue:(nullable id) prevValue;
 
 /**
 	For manually triggering observers. EBNObervable subclasses can use this if they
@@ -249,7 +386,8 @@
 	@param propertyName The property that changed value
 	@param prevValue    The value the property had before the change.
  */
-- (void) ebn_manuallyTriggerObserversForProperty:(NSString *) propertyName previousValue:(id) prevValue newValue:(id) newValue;
+- (void) ebn_manuallyTriggerObserversForProperty:(nonnull NSString *) propertyName previousValue:(nullable id) prevValue
+		newValue:(nullable id) newValue;
 
 /**
 	Attempts to get the actual base class for a given class, before runtime subclassing. This is a bug workaround
@@ -263,7 +401,7 @@
 
 	@return The base class--the class that's at the root of any runtime subclassing
  */
-+ (Class) ebn_properBaseClass;
++ (nonnull Class) ebn_properBaseClass;
 
 @end
 
@@ -275,8 +413,8 @@
 		po [<modelObject> debugShowAllObservers]
 
 	@return A debug string with info about all observations active on the receiver.
- */
-- (NSString *) debugShowAllObservers;
+*/
+- (nonnull NSString *) debugShowAllObservers;
 
 /**
 	This can be used in the LLDB debugger to force a debug break when the value in the given keypath
@@ -297,8 +435,8 @@
 	@param keyPath A key path to observe
 
 	@return A string describing what the method did. When used in lldb, this string will be printed to the console.
- */
-- (NSString *) debugBreakOnChange:(NSString *) keyPath;
+*/
+- (nonnull NSString *) debugBreakOnChange:(nonnull NSString *) keyPath;
 
 /**
 	This can be used to cause a debugger break to occur when the value of the given keypath changes.
@@ -321,15 +459,15 @@
 	@param keyPath A key path to observe
 
 	@return A string describing what the method did. When used in lldb, this string will be printed to the console.
- */
-- (NSString *) debugBreakOnChange:(NSString *) keyPath line:(int) lineNum file:(const char *) filePath
-		func:(const char *) func;
+*/
+- (nonnull NSString *) debugBreakOnChange:(nonnull NSString *) keyPath line:(int) lineNum file:(nullable const char *) filePath
+		func:(nullable const char *) func;
 
 @end
 
 /**
 	A protocol that objects can implement to get notified when their properties get observed.
- */
+*/
 @protocol EBNObserverNotificationProtocol
 
 /**
@@ -342,7 +480,7 @@
 	@param propName        The name of the property whose observation state changed.
 	@param isBeingObserved TRUE if the property is now being observed
 */
-- (void) property:(NSString *) propName observationStateIs:(BOOL) isBeingObserved;
+- (void) property:(nonnull NSString *) propName observationStateIs:(BOOL) isBeingObserved;
 
 @end
 
@@ -355,7 +493,7 @@
 	Later, modelObject is deallocated, which can happen while you're observing on it--observation does not retain
 	the observed or observing objects, see docs. If your ViewController implements this protocol, you'll get notified of
 	the deallocation.
- */
+*/
 @protocol ObservedObjectDeallocProtocol <NSObject>
 
 /**
@@ -365,21 +503,115 @@
 	@param object     The object that's being dealloc'ed. This will always be the root of a keypath for some
 					  observation that you were doing at the time of dealloc.
 	@param keypathStr The keypath for the observation
- */
+*/
 @required
-- (void) observedObjectHasBeenDealloced:(id) object endingObservation:(NSString *) keypathStr;
+- (void) observedObjectHasBeenDealloced:(nonnull id) object endingObservation:(nonnull NSString *) keypathStr;
 
 @end
+
+
+
+
+#pragma mark - Insanity Hole
+
+// Just don't look at the stuff below this line. You'll lose sanity. This stuff is used for validating that
+// keypaths are valid property chains of their root objects, and isn't designed for direct use.
+/*********************************************************************************************/
 
 /**
-	In previous iterations of this code EBNObservable was the base class for observable objects and classes
-	that were not subclasses of EBNObservable could not be targets of observation. This class is being left in
-	for compatibility reasons.
-*/
-@interface EBNObservable : NSObject
+	A macro that returns nothing.
 	
-@end
+	Used to erase the ValidatePaths() from the paramsBundle as part of the execute of the Observe macro,
+	leaving only the observation block.
 
+	Do not use.
+*/
+#define EBNINTERNAL_ArgumentExpander(observerObj, observedObj, keypathArray, block) \
+	_Pragma("clang diagnostic push") \
+	_Pragma("clang diagnostic ignored \"-Wshadow\"") \
+	__typeof__(observerObj) __internalObserver = observerObj; \
+	__typeof__(observedObj) __internalObserved2 = observedObj; \
+	NSArray *__internalKeypathArray = keypathArray; \
+	ObservationBlock __internalBlock = block; \
+	_Pragma("clang diagnostic pop");
+
+/**
+	A macro that returns nothing.
+	
+	Used to erase the ValidatePaths() from the paramsBundle as part of the execute of the Observe macro,
+	leaving only the observation block.
+	
+	Do not use.
+*/
+#define EBNINTERNAL_ArgumentDestructor_ValidatePaths(observedObj, ...)
+#define EBNINTERNAL_ArgumentDestructor_ValidateObserverPaths(observedObj, ...)
+
+/**
+	An internal macro that returns its argument.
+	
+	Used for certain kinds of token-pasting operations, where we token-paste two names together to form a
+	macro name, and then want to execute that macro.
+	
+	Do not use.
+*/
+#define EBNINTERNAL_Indirector(x) x
+
+
+#define ValidatePath(pathName) \
+	if (0) \
+	{ \
+		__attribute__((unused)) __typeof__(__internalObserved.pathName) _EBNNotUsed = __internalObserved.pathName; \
+	}
+	
+
+	// This mess of macros is how we handle iterating the va_args that SyntheticProperty takes into
+	// individual path calls. Each one checks the first path, and sends the rest to the n-1 version.
+#define ValidatePath0(pathName)
+#define ValidatePath1(pathName) ValidatePath(pathName)
+#define ValidatePath2(pathName, ...) ValidatePath(pathName) ValidatePath1(__VA_ARGS__)
+#define ValidatePath3(pathName, ...) ValidatePath(pathName) ValidatePath2(__VA_ARGS__)
+#define ValidatePath4(pathName, ...) ValidatePath(pathName) ValidatePath3(__VA_ARGS__)
+#define ValidatePath5(pathName, ...) ValidatePath(pathName) ValidatePath4(__VA_ARGS__)
+#define ValidatePath6(pathName, ...) ValidatePath(pathName) ValidatePath5(__VA_ARGS__)
+#define ValidatePath7(pathName, ...) ValidatePath(pathName) ValidatePath6(__VA_ARGS__)
+#define ValidatePath8(pathName, ...) ValidatePath(pathName) ValidatePath7(__VA_ARGS__)
+#define ValidatePath9(pathName, ...) ValidatePath(pathName) ValidatePath8(__VA_ARGS__)
+#define ValidatePath10(pathName, ...) ValidatePath(pathName) ValidatePath9(__VA_ARGS__)
+#define ValidatePath11(pathName, ...) ValidatePath(pathName) ValidatePath10(__VA_ARGS__)
+#define ValidatePath12(pathName, ...) ValidatePath(pathName) ValidatePath11(__VA_ARGS__)
+#define ValidatePath13(pathName, ...) _Pragma("GCC error \"The SyntheticProperty macro supports 12 dependent properties max. Use the syntheticProperty:dependsOn: methods instead.\"")
+
+	// This is a trick to figure out which ValidatePath<#> to start with, based on
+	// the number of arguments in varargs. Does not work with more then 12 arguments--
+	// just use the syntheticProperty:dependsOnPaths: method in that case.
+#define EBNValidatePathsInternal(...) EBNValidatePathsInternal_(,##__VA_ARGS__,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+#define EBNValidatePathsInternal_(a,b,c,d,e,f,g,h,i,j,k,l,m,n,count,...) ValidatePath ## count
+
+
+
+#define EBNStringifyArg(pathName) @#pathName
+	
+	// This mess of macros is how we handle iterating the va_args that SyntheticProperty takes into
+	// individual path calls. Each one checks the first path, and sends the rest to the n-1 version.
+#define EBNStringifyArgs0(pathName)
+#define EBNStringifyArgs1(pathName) EBNStringifyArg(pathName)
+#define EBNStringifyArgs2(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs1(__VA_ARGS__)
+#define EBNStringifyArgs3(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs2(__VA_ARGS__)
+#define EBNStringifyArgs4(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs3(__VA_ARGS__)
+#define EBNStringifyArgs5(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs4(__VA_ARGS__)
+#define EBNStringifyArgs6(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs5(__VA_ARGS__)
+#define EBNStringifyArgs7(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs6(__VA_ARGS__)
+#define EBNStringifyArgs8(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs7(__VA_ARGS__)
+#define EBNStringifyArgs9(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs8(__VA_ARGS__)
+#define EBNStringifyArgs10(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs9(__VA_ARGS__)
+#define EBNStringifyArgs11(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs10(__VA_ARGS__)
+#define EBNStringifyArgs12(pathName, ...) EBNStringifyArg(pathName), EBNStringifyArgs11(__VA_ARGS__)
+#define EBNStringifyArgs13(pathName, ...) _Pragma("GCC error \"The SyntheticProperty macro supports 12 dependent properties max. Use the syntheticProperty:dependsOn: methods instead.\"")
+
+	// This is a trick to figure out which EBNStringifyArgs<#> to start with, based on
+	// the number of arguments in varargs. Does not work with more then 12 arguments.
+#define EBNStringifyArgs(...) EBNStringifyArgs_(,##__VA_ARGS__,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+#define EBNStringifyArgs_(a,b,c,d,e,f,g,h,i,j,k,l,m,n,count,...) EBNStringifyArgs ## count
 
 
 #if defined(__cplusplus) || defined(c_plusplus)

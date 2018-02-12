@@ -2,24 +2,18 @@
 	ObservableSwiftTests.swift
 	Observable
 	
-	Created by Chall Fry on 11/8/15.
-    Copyright (c) 2013-2015 eBay Software Foundation.
+    Created by Chall Fry on 11/8/15.
+    Copyright (c) 2013-2018 eBay Software Foundation.
 
-    Unit tests, in Swift.
-	
-	Swift does some special stuff that doesn't always interoperate well with KVO.
-	See documentation on Swift's dynamic variable declaration modifier.
-	
-	This file does a few basic tests to show that observation does work, or at least that it
-	can work if you set everything up just so in Swift.
+    Unit tests.
 */
 
 import XCTest
 
 class SwiftModelA : NSObject
 {
-	dynamic var intProperty : Int = 0;
-	dynamic var boolProperty : Bool = false;
+	@objc dynamic var intProperty : Int = 0;
+	@objc dynamic var boolProperty : Bool = false;
 }
 
 class ObservableSwiftTests: XCTestCase
@@ -43,11 +37,12 @@ class ObservableSwiftTests: XCTestCase
 	{
 		let modelA = SwiftModelA();
 		
-		let block = { [weak self] (observing: AnyObject!, observed:AnyObject!) -> Void in
+		let block = { [weak self] (observing: Optional<Any>, observed:Optional<Any>) -> Void in
 			if (self != nil)
 			{
-				self!.observerCallCount1++;
-				self!.propValInBlock = observed.intProperty;
+				let obs = observed as! SwiftModelA;
+				self!.observerCallCount1 += 1
+				self!.propValInBlock = obs.intProperty;
 			}
 			
 		};
@@ -57,7 +52,7 @@ class ObservableSwiftTests: XCTestCase
 		
 		modelA.tell(self, when:"boolProperty") { (observing, observed) in
 			let blockSelf = observing as! ObservableSwiftTests
-			blockSelf.observerCallCount1++
+			blockSelf.observerCallCount1 += 1
 		};
 		modelA.boolProperty = true;
 		

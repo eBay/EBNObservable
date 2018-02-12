@@ -7,17 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		EA0A224F1C336B11008578EF /* EBNLazyLoaderTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */; };
-		EA0A22501C336B11008578EF /* EBNObservableArrayTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */; };
-		EA0A22511C336B11008578EF /* EBNObservableDictionaryTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */; };
-		EA0A22521C336B11008578EF /* EBNObservableSetTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */; };
-		EA0A22531C336B11008578EF /* EBNObservableTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224D1C336B11008578EF /* EBNObservableTests.m */; };
-		EA0A22541C336B11008578EF /* ObservableSwiftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */; };
 		EA186E70193D8D97008A0A7B /* EBNLazyLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA186E68193D8D97008A0A7B /* EBNLazyLoader.mm */; };
 		EA186E71193D8D97008A0A7B /* EBNObservable.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA186E6A193D8D97008A0A7B /* EBNObservable.mm */; };
-		EA186E72193D8D97008A0A7B /* EBNObservableCollections.m in Sources */ = {isa = PBXBuildFile; fileRef = EA186E6C193D8D97008A0A7B /* EBNObservableCollections.m */; };
 		EA186E73193D8D97008A0A7B /* EBNObservation.m in Sources */ = {isa = PBXBuildFile; fileRef = EA186E6F193D8D97008A0A7B /* EBNObservation.m */; };
-		EA186E78193D8F19008A0A7B /* DebugUtils.m in Sources */ = {isa = PBXBuildFile; fileRef = EA186E77193D8F19008A0A7B /* DebugUtils.m */; };
+		EA186E78193D8F19008A0A7B /* EBNDebugUtilities.m in Sources */ = {isa = PBXBuildFile; fileRef = EA186E77193D8F19008A0A7B /* EBNDebugUtilities.m */; };
+		EA29E4DD1C958356009876F1 /* NSArray+EBNObservable.m in Sources */ = {isa = PBXBuildFile; fileRef = EA29E4DA1C9580C6009876F1 /* NSArray+EBNObservable.m */; };
 		EA5B6C4217D08FA60077F905 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA5B6C4117D08FA60077F905 /* Foundation.framework */; };
 		EA5B6C4417D08FA60077F905 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA5B6C4317D08FA60077F905 /* CoreGraphics.framework */; };
 		EA5B6C4617D08FA60077F905 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA5B6C4517D08FA60077F905 /* UIKit.framework */; };
@@ -30,6 +24,15 @@
 		EA63E951198AFAFE0067C917 /* SubViewController.xib in Resources */ = {isa = PBXBuildFile; fileRef = EA63E94B198AFAFD0067C917 /* SubViewController.xib */; };
 		EA63E952198AFAFE0067C917 /* TestWindowViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = EA63E94D198AFAFE0067C917 /* TestWindowViewController.m */; };
 		EA63E953198AFAFE0067C917 /* TestWindowViewController.xib in Resources */ = {isa = PBXBuildFile; fileRef = EA63E94E198AFAFE0067C917 /* TestWindowViewController.xib */; };
+		EAAA0E801C955AAE00833710 /* NSSet+EBNObservable.m in Sources */ = {isa = PBXBuildFile; fileRef = EA4E540A1C943617007B736B /* NSSet+EBNObservable.m */; };
+		EAD6F42C1C8ED5690011797A /* NSDictionary+EBNObservable.m in Sources */ = {isa = PBXBuildFile; fileRef = EA3A78EC1C7B17F200C34873 /* NSDictionary+EBNObservable.m */; };
+		EAE7963C1E77D93D004EEF80 /* EBNKeypathEntryInfo.mm in Sources */ = {isa = PBXBuildFile; fileRef = EAE7963B1E77D93D004EEF80 /* EBNKeypathEntryInfo.mm */; };
+		EAE796451E794B56004EEF80 /* EBNLazyLoaderTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAE7963E1E794B56004EEF80 /* EBNLazyLoaderTests.m */; };
+		EAE796461E794B56004EEF80 /* EBNObservableArrayTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAE7963F1E794B56004EEF80 /* EBNObservableArrayTests.m */; };
+		EAE796471E794B56004EEF80 /* EBNObservableDictionaryTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAE796401E794B56004EEF80 /* EBNObservableDictionaryTests.m */; };
+		EAE796481E794B56004EEF80 /* EBNObservableSetTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAE796411E794B56004EEF80 /* EBNObservableSetTests.m */; };
+		EAE796491E794B56004EEF80 /* EBNObservableTests.m in Sources */ = {isa = PBXBuildFile; fileRef = EAE796421E794B56004EEF80 /* EBNObservableTests.m */; };
+		EAE7964A1E794B56004EEF80 /* ObservableSwiftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE796441E794B56004EEF80 /* ObservableSwiftTests.swift */; };
 		EAFF2B391903D0CA0022C704 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = EAFF2B321903D0CA0022C704 /* AppDelegate.m */; };
 		EAFF2B3A1903D0CA0022C704 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = EAFF2B331903D0CA0022C704 /* InfoPlist.strings */; };
 		EAFF2B3B1903D0CA0022C704 /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EAFF2B351903D0CA0022C704 /* Images.xcassets */; };
@@ -47,24 +50,22 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNLazyLoaderTests.m; path = ObservableTests/EBNLazyLoaderTests.m; sourceTree = "<group>"; };
-		EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableArrayTests.m; path = ObservableTests/EBNObservableArrayTests.m; sourceTree = "<group>"; };
-		EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableDictionaryTests.m; path = ObservableTests/EBNObservableDictionaryTests.m; sourceTree = "<group>"; };
-		EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableSetTests.m; path = ObservableTests/EBNObservableSetTests.m; sourceTree = "<group>"; };
-		EA0A224D1C336B11008578EF /* EBNObservableTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EBNObservableTests.m; path = ObservableTests/EBNObservableTests.m; sourceTree = "<group>"; };
-		EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ObservableSwiftTests.swift; path = ObservableTests/ObservableSwiftTests.swift; sourceTree = "<group>"; };
 		EA0A22551C336B1E008578EF /* ObservableTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "ObservableTests-Bridging-Header.h"; path = "ObservableTests/ObservableTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		EA186E67193D8D97008A0A7B /* EBNLazyLoader.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNLazyLoader.h; sourceTree = "<group>"; };
 		EA186E68193D8D97008A0A7B /* EBNLazyLoader.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = EBNLazyLoader.mm; sourceTree = "<group>"; };
 		EA186E69193D8D97008A0A7B /* EBNObservable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservable.h; sourceTree = "<group>"; };
 		EA186E6A193D8D97008A0A7B /* EBNObservable.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = EBNObservable.mm; sourceTree = "<group>"; };
-		EA186E6B193D8D97008A0A7B /* EBNObservableCollections.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservableCollections.h; sourceTree = "<group>"; };
-		EA186E6C193D8D97008A0A7B /* EBNObservableCollections.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservableCollections.m; sourceTree = "<group>"; };
 		EA186E6D193D8D97008A0A7B /* EBNObservableInternal.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservableInternal.h; sourceTree = "<group>"; };
 		EA186E6E193D8D97008A0A7B /* EBNObservation.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservation.h; sourceTree = "<group>"; };
 		EA186E6F193D8D97008A0A7B /* EBNObservation.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservation.m; sourceTree = "<group>"; };
-		EA186E76193D8F19008A0A7B /* DebugUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DebugUtils.h; sourceTree = "<group>"; };
-		EA186E77193D8F19008A0A7B /* DebugUtils.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = DebugUtils.m; sourceTree = "<group>"; };
+		EA186E76193D8F19008A0A7B /* EBNDebugUtilities.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNDebugUtilities.h; sourceTree = "<group>"; };
+		EA186E77193D8F19008A0A7B /* EBNDebugUtilities.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNDebugUtilities.m; sourceTree = "<group>"; };
+		EA29E4D91C9580C6009876F1 /* NSArray+EBNObservable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSArray+EBNObservable.h"; sourceTree = "<group>"; };
+		EA29E4DA1C9580C6009876F1 /* NSArray+EBNObservable.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSArray+EBNObservable.m"; sourceTree = "<group>"; };
+		EA3A78EB1C7B17F200C34873 /* NSDictionary+EBNObservable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSDictionary+EBNObservable.h"; sourceTree = "<group>"; };
+		EA3A78EC1C7B17F200C34873 /* NSDictionary+EBNObservable.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSDictionary+EBNObservable.m"; sourceTree = "<group>"; };
+		EA4E54091C943617007B736B /* NSSet+EBNObservable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSSet+EBNObservable.h"; sourceTree = "<group>"; };
+		EA4E540A1C943617007B736B /* NSSet+EBNObservable.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSSet+EBNObservable.m"; sourceTree = "<group>"; };
 		EA586E2F1959867900A4A30F /* Documentation.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = Documentation.pdf; sourceTree = SOURCE_ROOT; };
 		EA586E31195986AE00A4A30F /* README.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = README.md; sourceTree = SOURCE_ROOT; };
 		EA5B6C3E17D08FA60077F905 /* Observable.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Observable.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -83,6 +84,14 @@
 		EA63E94C198AFAFD0067C917 /* TestWindowViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TestWindowViewController.h; sourceTree = "<group>"; };
 		EA63E94D198AFAFE0067C917 /* TestWindowViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TestWindowViewController.m; sourceTree = "<group>"; };
 		EA63E94E198AFAFE0067C917 /* TestWindowViewController.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = TestWindowViewController.xib; sourceTree = "<group>"; };
+		EAE7963B1E77D93D004EEF80 /* EBNKeypathEntryInfo.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = EBNKeypathEntryInfo.mm; sourceTree = "<group>"; };
+		EAE7963E1E794B56004EEF80 /* EBNLazyLoaderTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNLazyLoaderTests.m; sourceTree = "<group>"; };
+		EAE7963F1E794B56004EEF80 /* EBNObservableArrayTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservableArrayTests.m; sourceTree = "<group>"; };
+		EAE796401E794B56004EEF80 /* EBNObservableDictionaryTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservableDictionaryTests.m; sourceTree = "<group>"; };
+		EAE796411E794B56004EEF80 /* EBNObservableSetTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservableSetTests.m; sourceTree = "<group>"; };
+		EAE796421E794B56004EEF80 /* EBNObservableTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EBNObservableTests.m; sourceTree = "<group>"; };
+		EAE796431E794B56004EEF80 /* EBNObservableUnitTestSupport.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EBNObservableUnitTestSupport.h; sourceTree = "<group>"; };
+		EAE796441E794B56004EEF80 /* ObservableSwiftTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ObservableSwiftTests.swift; sourceTree = "<group>"; };
 		EAFF2B311903D0CA0022C704 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		EAFF2B321903D0CA0022C704 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
 		EAFF2B341903D0CA0022C704 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -123,8 +132,13 @@
 				EA186E68193D8D97008A0A7B /* EBNLazyLoader.mm */,
 				EA186E69193D8D97008A0A7B /* EBNObservable.h */,
 				EA186E6A193D8D97008A0A7B /* EBNObservable.mm */,
-				EA186E6B193D8D97008A0A7B /* EBNObservableCollections.h */,
-				EA186E6C193D8D97008A0A7B /* EBNObservableCollections.m */,
+				EAE7963B1E77D93D004EEF80 /* EBNKeypathEntryInfo.mm */,
+				EA29E4D91C9580C6009876F1 /* NSArray+EBNObservable.h */,
+				EA29E4DA1C9580C6009876F1 /* NSArray+EBNObservable.m */,
+				EA3A78EB1C7B17F200C34873 /* NSDictionary+EBNObservable.h */,
+				EA3A78EC1C7B17F200C34873 /* NSDictionary+EBNObservable.m */,
+				EA4E54091C943617007B736B /* NSSet+EBNObservable.h */,
+				EA4E540A1C943617007B736B /* NSSet+EBNObservable.m */,
 				EA186E6D193D8D97008A0A7B /* EBNObservableInternal.h */,
 				EA186E6E193D8D97008A0A7B /* EBNObservation.h */,
 				EA186E6F193D8D97008A0A7B /* EBNObservation.m */,
@@ -136,7 +150,7 @@
 		EA5B6C3517D08FA60077F905 = {
 			isa = PBXGroup;
 			children = (
-				EA5B6C4717D08FA60077F905 /* Observable */,
+				EA5B6C4717D08FA60077F905 /* Observable Project Files */,
 				EA5B6C6017D08FA60077F905 /* ObservableTests */,
 				EA5B6C4017D08FA60077F905 /* Frameworks */,
 				EA5B6C3F17D08FA60077F905 /* Products */,
@@ -163,7 +177,7 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		EA5B6C4717D08FA60077F905 /* Observable */ = {
+		EA5B6C4717D08FA60077F905 /* Observable Project Files */ = {
 			isa = PBXGroup;
 			children = (
 				EA586E31195986AE00A4A30F /* README.md */,
@@ -172,18 +186,13 @@
 				EAFF2B301903D0CA0022C704 /* App Shell */,
 				EA63E946198AFAFD0067C917 /* Test UI */,
 			);
-			path = Observable;
+			path = "Observable Project Files";
 			sourceTree = "<group>";
 		};
 		EA5B6C6017D08FA60077F905 /* ObservableTests */ = {
 			isa = PBXGroup;
 			children = (
-				EA0A22491C336B11008578EF /* EBNLazyLoaderTests.m */,
-				EA0A224A1C336B11008578EF /* EBNObservableArrayTests.m */,
-				EA0A224B1C336B11008578EF /* EBNObservableDictionaryTests.m */,
-				EA0A224C1C336B11008578EF /* EBNObservableSetTests.m */,
-				EA0A224D1C336B11008578EF /* EBNObservableTests.m */,
-				EA0A224E1C336B11008578EF /* ObservableSwiftTests.swift */,
+				EAE7963D1E794B56004EEF80 /* EBNObservable */,
 				EA0A22551C336B1E008578EF /* ObservableTests-Bridging-Header.h */,
 				EA5B6C6117D08FA60077F905 /* Supporting Files */,
 			);
@@ -215,13 +224,27 @@
 			path = "Observable Project Files/Test UI";
 			sourceTree = SOURCE_ROOT;
 		};
+		EAE7963D1E794B56004EEF80 /* EBNObservable */ = {
+			isa = PBXGroup;
+			children = (
+				EAE7963E1E794B56004EEF80 /* EBNLazyLoaderTests.m */,
+				EAE7963F1E794B56004EEF80 /* EBNObservableArrayTests.m */,
+				EAE796401E794B56004EEF80 /* EBNObservableDictionaryTests.m */,
+				EAE796411E794B56004EEF80 /* EBNObservableSetTests.m */,
+				EAE796421E794B56004EEF80 /* EBNObservableTests.m */,
+				EAE796431E794B56004EEF80 /* EBNObservableUnitTestSupport.h */,
+				EAE796441E794B56004EEF80 /* ObservableSwiftTests.swift */,
+			);
+			path = EBNObservable;
+			sourceTree = "<group>";
+		};
 		EAFF2B301903D0CA0022C704 /* App Shell */ = {
 			isa = PBXGroup;
 			children = (
 				EAFF2B311903D0CA0022C704 /* AppDelegate.h */,
 				EAFF2B321903D0CA0022C704 /* AppDelegate.m */,
-				EA186E76193D8F19008A0A7B /* DebugUtils.h */,
-				EA186E77193D8F19008A0A7B /* DebugUtils.m */,
+				EA186E76193D8F19008A0A7B /* EBNDebugUtilities.h */,
+				EA186E77193D8F19008A0A7B /* EBNDebugUtilities.m */,
 				EAFF2B331903D0CA0022C704 /* InfoPlist.strings */,
 				EAFF2B351903D0CA0022C704 /* Images.xcassets */,
 				EAFF2B361903D0CA0022C704 /* main.m */,
@@ -277,10 +300,14 @@
 			isa = PBXProject;
 			attributes = {
 				LastSwiftUpdateCheck = 0710;
-				LastUpgradeCheck = 0500;
+				LastUpgradeCheck = 0720;
 				ORGANIZATIONNAME = "Chall Fry";
 				TargetAttributes = {
+					EA5B6C3D17D08FA60077F905 = {
+						DevelopmentTeam = QYHMMGCMJR;
+					};
 					EA5B6C5817D08FA60077F905 = {
+						LastSwiftMigration = 0800;
 						TestTargetID = EA5B6C3D17D08FA60077F905;
 					};
 				};
@@ -330,7 +357,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EAAA0E801C955AAE00833710 /* NSSet+EBNObservable.m in Sources */,
 				EA186E70193D8D97008A0A7B /* EBNLazyLoader.mm in Sources */,
+				EAE7963C1E77D93D004EEF80 /* EBNKeypathEntryInfo.mm in Sources */,
 				EA186E73193D8D97008A0A7B /* EBNObservation.m in Sources */,
 				EA63E94F198AFAFE0067C917 /* ModelObjects.m in Sources */,
 				EA63E950198AFAFE0067C917 /* SubViewController.m in Sources */,
@@ -338,8 +367,9 @@
 				EAFF2B3C1903D0CA0022C704 /* main.m in Sources */,
 				EAFF2B391903D0CA0022C704 /* AppDelegate.m in Sources */,
 				EA186E71193D8D97008A0A7B /* EBNObservable.mm in Sources */,
-				EA186E72193D8D97008A0A7B /* EBNObservableCollections.m in Sources */,
-				EA186E78193D8F19008A0A7B /* DebugUtils.m in Sources */,
+				EAD6F42C1C8ED5690011797A /* NSDictionary+EBNObservable.m in Sources */,
+				EA186E78193D8F19008A0A7B /* EBNDebugUtilities.m in Sources */,
+				EA29E4DD1C958356009876F1 /* NSArray+EBNObservable.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -347,12 +377,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EA0A22541C336B11008578EF /* ObservableSwiftTests.swift in Sources */,
-				EA0A22511C336B11008578EF /* EBNObservableDictionaryTests.m in Sources */,
-				EA0A22501C336B11008578EF /* EBNObservableArrayTests.m in Sources */,
-				EA0A224F1C336B11008578EF /* EBNLazyLoaderTests.m in Sources */,
-				EA0A22521C336B11008578EF /* EBNObservableSetTests.m in Sources */,
-				EA0A22531C336B11008578EF /* EBNObservableTests.m in Sources */,
+				EAE7964A1E794B56004EEF80 /* ObservableSwiftTests.swift in Sources */,
+				EAE796471E794B56004EEF80 /* EBNObservableDictionaryTests.m in Sources */,
+				EAE796461E794B56004EEF80 /* EBNObservableArrayTests.m in Sources */,
+				EAE796451E794B56004EEF80 /* EBNLazyLoaderTests.m in Sources */,
+				EAE796481E794B56004EEF80 /* EBNObservableSetTests.m in Sources */,
+				EAE796491E794B56004EEF80 /* EBNObservableTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -404,6 +434,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				COPY_PHASE_STRIP = NO;
+				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu99;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_OPTIMIZATION_LEVEL = 0;
@@ -461,9 +492,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				DEAD_CODE_STRIPPING = NO;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "Observable Project Files/App Shell/Observable-Prefix.pch";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/EBNObservable/**";
 				INFOPLIST_FILE = "Observable Project Files/App Shell/Observable-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ebay.${PRODUCT_NAME:rfc1034identifier}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = app;
 			};
@@ -474,9 +509,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				DEAD_CODE_STRIPPING = NO;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "Observable Project Files/App Shell/Observable-Prefix.pch";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/EBNObservable/**";
 				INFOPLIST_FILE = "Observable Project Files/App Shell/Observable-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ebay.${PRODUCT_NAME:rfc1034identifier}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = app;
 			};
@@ -487,22 +526,21 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/Observable.app/Observable";
 				CLANG_ENABLE_MODULES = YES;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SDKROOT)/Developer/Library/Frameworks",
-					"$(inherited)",
-					"$(DEVELOPER_FRAMEWORKS_DIR)",
-				);
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "Observable Project Files/App Shell/Observable-Prefix.pch";
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
 				);
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/EBNObservable/**";
 				INFOPLIST_FILE = "ObservableTests/ObservableTests-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ebay.${PRODUCT_NAME:rfc1034identifier}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "ObservableTests/ObservableTests/ObservableTests-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 3.0;
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;
 			};
@@ -513,17 +551,16 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/Observable.app/Observable";
 				CLANG_ENABLE_MODULES = YES;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SDKROOT)/Developer/Library/Frameworks",
-					"$(inherited)",
-					"$(DEVELOPER_FRAMEWORKS_DIR)",
-				);
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "Observable Project Files/App Shell/Observable-Prefix.pch";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/EBNObservable/**";
 				INFOPLIST_FILE = "ObservableTests/ObservableTests-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ebay.${PRODUCT_NAME:rfc1034identifier}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "ObservableTests/ObservableTests/ObservableTests-Bridging-Header.h";
+				SWIFT_VERSION = 3.0;
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;
 			};

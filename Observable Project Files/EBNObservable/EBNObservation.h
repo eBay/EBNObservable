@@ -3,27 +3,29 @@
 	Observable
 	
 	Created by Chall Fry on 5/3/14.
-    Copyright (c) 2013-2014 eBay Software Foundation.
+    Copyright (c) 2013-2018 eBay Software Foundation.
 	
 */
 
 #import <Foundation/Foundation.h>
 
+@class EBNKeypathEntryInfo;
+
 #define EBNStringify(x) @#x
 
 	// Don't use this directly. This macro puts a bunch of strange stuff in an if (0) block to perform
 	// several kinds of compile-time validation.
-#define EBNValidateObservationBlock(observedObj, blockContents) \
+#define EBNValidateObservationBlock(observerObj, observedObj, blockContents) \
 ({\
 	if (0) \
 	{\
 		__attribute__((unused)) __typeof__(self) blockSelf = nil; \
+		__attribute__((unused)) __typeof__(observerObj) observer = nil; \
 		__attribute__((unused)) __typeof__(observedObj) observed = nil; \
 		__attribute__((unused)) id prevValue = nil; \
 		_Pragma("clang diagnostic push") \
 		_Pragma("clang diagnostic ignored \"-Wshadow\"") \
 		__attribute__((unavailable("Don't use self directly in Observable blocks. Use \"blockSelf\" instead."), unused)) __typeof__(self) self = nil; \
-		__attribute__((unavailable("Don't access the observed object directly in Observable blocks: Use \"observed\" instead."), unused)) __typeof__(observedObj) observedObj = nil; \
 		_Pragma("clang diagnostic pop") \
 		blockContents; \
 	} \
@@ -51,7 +53,7 @@
 	EBNObservation *_newblock = [[EBNObservation alloc] initForObserved:_internalObserved observer:self \
 			block:^(__typeof__(self) blockSelf, __typeof__(_internalObserved) observed) blockContents]; \
 	[_newblock setDebugStringWithFn:__PRETTY_FUNCTION__ file:__FILE__ line:__LINE__]; \
-	EBNValidateObservationBlock(_internalObserved, blockContents); \
+	EBNValidateObservationBlock(self, _internalObserved, blockContents); \
 	_newblock; \
 })
 
@@ -70,9 +72,9 @@
 ({\
 	__typeof__(observedObj) _internalObserved = observedObj; \
 	EBNObservation *_newblock = [[EBNObservation alloc] initForObserved:_internalObserved observer:self \
-			immedBlock:^(__typeof__(self) blockSelf, __typeof__(_internalObserved) observed, id prevValue) blockContents]; \
+			immedBlock:^(__typeof__(self) blockSelf, __typeof__(_internalObserved) observed) blockContents]; \
 	[_newblock setDebugStringWithFn:__PRETTY_FUNCTION__ file:__FILE__ line:__LINE__]; \
-	EBNValidateObservationBlock(_internalObserved, blockContents); \
+	EBNValidateObservationBlock(self, _internalObserved, blockContents); \
 	_newblock; \
 })
 
@@ -86,27 +88,27 @@
 	@param observingObj The object getting notified of changes
 	@param observedObj  The object being watched
  */
-typedef void (^ObservationBlock)(id observingObj, id observedObj);
+typedef void (^ObservationBlock)(id _Nonnull observingObj, id _Nonnull observedObj);
 
 
 /**
-	This is an immediate-mode observation block. Immediate mode observations will get called as soon
-	as their observed value changes. That is, they'll get called from within the overridden setter method.
+	This object encapsulates a single observation that can be applied to keypaths to observe things.
 	
-	Generally you shouldn't use this, as the delayed form has several advantages. But, if you *really* need 
-	the previous value, it's here.
-
-	@param observingObj  The object getting notified of changes
-	@param observedObj   The object being watched
-	@param previousValue The previous value of the property
- */
-typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previousValue);
-
-
-@interface EBNObservation : NSObject
+	An observation object (primarily) contains:
+		- A weak link to the observed object.
+		- A weak link to the observing object.
+		- The block to execute.
+		
+	Observation objects primarily deal with the managing the lifetime of the observation, meaning they remove
+	themselves if either the observed or observing object is deallocated. 
+	
+	A side effect of the above is that a single observation is 'rooted' at its observed object, and all keypaths
+	it is asked to observe will be relative to that object.
+*/
+@interface EBNObservation : NSObject <NSCopying>
 
 	/// Custom info shown in the debugger about this observation
-@property (strong) NSString				*debugString;
+@property (strong, nullable) NSString	*debugString;
 
 	/// Marks the observation object as being a LazyLoader observer, that is, an observation set up
 	/// by LazyLoader to invalidate some other property when the observed property changes value.
@@ -115,7 +117,14 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 	/// Causes an immediate debug break when any of the properties this observation is observing change.
 	/// This is very useful when an observation that's observing a list of properties is firing unexpectedly, and you
 	/// need to figure out which property is being changed, and by whom.
-@property (assign) BOOL					debugBreakOnChange;
+@property (assign) BOOL					willDebugBreakOnChange;
+
+	/// Causes a debug break when this observation's block is about to be called.
+	/// The ObserveProperty() macros confuse Xcode's breakpoint setting mechanics (the contents of the observation
+	/// block are expanded multiple times within the macro--don't ask) meanins XCode doesn't know where to put
+	/// the breakpoint. This lets you break just before these blocks so you can debug through them.
+	@property (assign) BOOL				willDebugBreakOnInvoke;
+
 
 /**
 	Initializes a EBNObservation, for use with the given observed and observer objects.
@@ -126,7 +135,8 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return an EBNObservation object
  */
-- (instancetype) initForObserved:(NSObject *) observed observer:(id) observer block:(ObservationBlock) callBlock;
+- (nullable instancetype) initForObserved:(nullable NSObject *) observed observer:(nullable id) observer
+		block:(nonnull ObservationBlock) callBlock;
 
 /**
 	Initializes a EBNObservation, for use with the given observed and observer objects.
@@ -137,44 +147,82 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 
 	@return an EBNObservation object
  */
-- (instancetype) initForObserved:(NSObject *) observed observer:(id) observer immedBlock:(ObservationBlockImmed) callBlock;
+- (nullable instancetype) initForObserved:(nullable NSObject *) observed observer:(nullable id) observer
+		immedBlock:(nullable ObservationBlock) callBlock;
 
 /**
 	Tells the receiver to begin observing changes to the given keypath.
 
 	@param keyPath A keypath rooted at the receiver.
 
-	@return TRUE if observation was set up successfully
+	@return Returns the receiver, to allow chaining.
  */
-- (BOOL) observe:(NSString *) keyPath;
+- (nonnull EBNObservation *) observe:(nonnull NSString *) keyPath;
 
 /**
-	Tells the receiver to being observing changes to multiple keypaths. All keypaths must be rooted 
+	Tells the receiver to begin observing changes to multiple keypaths. All keypaths must be rooted
 	at the receiver.
 
 	@param keyPaths An array of keypaths.
 
-	@return TRUE if observations were set up successfully
+	@return Returns the receiver, to allow chaining.
  */
-- (BOOL) observeMultiple:(NSArray *) keyPaths;
+- (nonnull EBNObservation *) observeMultiple:(nonnull NSArray *) keyPaths;
 
 /**
-	Checks that the observing and observed objects haven't been dealloc'ed, and then executes 
-	the block associated with this observation object.
+	Ends all observations the receiver was running on its observed object.
+*/
+- (void) stopObservations;
 
-	@return TRUE if the block was executed, else FALSE
+/**
+	Transforms a delayed-mode observation into an immediate-mode one. Use this if you need to receive
+	observation callbacks on the thread where the change happens.
+*/
+- (nullable EBNObservation *) makeImmediateMode;
+
+/**
+	Checks that the observing and observed objects haven't been dealloc'ed, and then immediately executes 
+	the (normally delayed) block associated with this observation object.
+
+	@return self if the block was executed, else nil
  */
-- (BOOL) execute;
+- (nullable EBNObservation *) execute;
+
+/**
+	Schedules the observation to fire at the end of the next runloop. Does not fire immediate mode
+	observations.
+	
+	@return self if the block was scheduled, else nil
+*/
+- (nullable EBNObservation *) schedule;
+
+/**
+	If this is an immediate-fire block, runs the block.
+	Checks that the observed and observing object are still around first.
+	No effect for delayed-fire blocks.
+*/
+- (BOOL) executeImmedBlockWithPreviousValue:(nullable id) prevValue;
 
 /**
 	Checks that the observing and observed objects haven't been dealloc'ed, and then executes the
-	immediate mode block associated with this observation object.
+	block associated with this observation object.
 
 	@param prevValue Passed into the block as the prevValue parameter
 
 	@return TRUE if the block was executed, else FALSE
  */
-- (BOOL) executeWithPreviousValue:(id) prevValue;
+- (BOOL) executeWithPreviousValue:(nullable id) prevValue;
+
+/**
+	Will cause a debug break when any property change that schedules this observation to be invoked occurs.
+*/
+- (nullable EBNObservation *) debugBreakOnChange;
+
+/**
+	Causes a debug break at a point just before this observation is going to be invoked.
+*/
+- (nullable EBNObservation *) debugBreakOnInvoke;
+
 
 /**
 	For use by macros. Meant to gather __FILE__ and __LINE__ into the debug string for the observation.
@@ -183,7 +231,69 @@ typedef void (^ObservationBlockImmed)(id observingObj, id observedObj, id previo
 	@param filePath Name of the current file, from the __FILE__ builtin
 	@param lineNum  Current line num in the file, from the __LINE__ builtin
  */
-- (void) setDebugStringWithFn:(const char *) fnName file:(const char *) filePath line:(int) lineNum;
+- (void) setDebugStringWithFn:(nullable const char *) fnName file:(nullable const char *) filePath line:(int) lineNum;
 
 @end
+
+/**
+	This function can be used directly to set up observations, but its real purpose is to work in concert 
+	with the ValidatePaths macro and the Observe macro, with syntax that looks like this:
+	
+	ObserveNoSelfCheck(ValidatePaths(observedObj, keypathList, ...) { observerBlockContents } );
+	
+	There is no comma after the ValidatePaths macro. Dumb syntax, I know, but it is much more compact, and more similar
+	to how ObserveProperty() works.
+	
+	This function/macro pair should be used in cases where the block can't be part of a macro, due to 
+	internal commas or a need to reference self instead of blockSelf. This variant gives you safety checks
+	for the observed keypaths, but not for the block contents.
+	
+	@param observer					The object doing the observing, usually 'self'.
+	@param observedObj				The object to observe.
+	@param keypathArray				A NSArray of NSStrings, each string a KVC style keypath.
+	@param block					The block to invoke when any of the keypaths changes value.
+
+*/
+EBNObservation * _Nullable ObserveNoSelfCheck(id _Nonnull observer, id _Nonnull observedObj,
+		NSArray * _Nonnull keypathArray, ObservationBlock _Nonnull block);
+EBNObservation * _Nullable ObserveImmedNoSelfCheck(id _Nonnull observer, id _Nonnull observedObj, 
+		NSArray * _Nonnull keypathArray, ObservationBlock _Nonnull block);
+
+
+/**
+	This function can be used directly to set up observations, but its real purpose is to work in concert 
+	with the ValidatePaths macro and the Observe macro, with syntax that looks like this:
+	
+	ObserveDebug(ValidatePaths(observedObj, keypathList, ...) { observerBlockContents } );
+	
+	There is no comma after the ValidatePaths macro. Dumb syntax, I know, but it is much more compact, and more similar
+	to how ObserveProperty() works.
+	
+	This variant is designed to have a syntax nearly identical to the Observe(ValidateKeypaths()) pair.
+	Changing Observe to ObserveDebug makes debug breakpoints work inside the observation block. 
+	ObserveDebug will only compile on debug builds, and will cause errors on release builds.
+	
+	@param observer					The object doing the observing, usually 'self'.
+	@param observedObj				The object to observe.
+	@param keypathArray				A NSArray of NSStrings, each string a KVC style keypath.
+	@param block					The block to invoke when any of the keypaths changes value.
+*/
+
+EBNObservation * _Nullable ObserveDebug(id _Nonnull observer, id _Nonnull observedObj, NSArray * _Nonnull keypathArray,
+		ObservationBlock _Nonnull block)
+#if DEBUG
+	;
+#else
+	__attribute__((unavailable));
+#endif
+
+EBNObservation * _Nullable ObserveImmedDebug(id _Nonnull observer, id _Nonnull observedObj, 
+		NSArray * _Nonnull keypathArray, ObservationBlock _Nonnull block)
+#if DEBUG
+	;
+#else
+	__attribute__((unavailable));
+#endif
+
+
 

@@ -3,7 +3,7 @@
 	Observable
 	
 	Created by Chall Fry on 4/29/14.
-	Copyright (c) 2013-2014 eBay Software Foundation.
+	Copyright (c) 2013-2018 eBay Software Foundation.
 	
 	EBNLazyLoader is a category on NSObject that provides the ability for creating synthetic properties.
 
@@ -40,10 +40,13 @@
 	and you have made fullName into a synthetic property whose value depends on firstName and lastName.
 	FullName will automatically invalidate itself (and recompute the next time its value is requested) when
 	either firstName or lastName changes. No need to call an Invalidate method (although you still can do so).
-	
-	Generally, you should only consider using LazyLoader in cases where you have a custom getter, and the
-	more computationally-intensive the getter, the better.
-	
+
+	Making your synthetic properties LazyLoaded can provide a performance improvement; the more complicated
+	the getter, the better. However, the real benefits of this class are:
+		- a system of handling mass property invalidation,
+		- a way to specify value dependencies, so that changing a source property invalidates dependent 
+		  properties automatically,
+		- a way to make synthetic properties that can be observed correctly.
 */
 
 #import "EBNObservable.h"
@@ -52,15 +55,19 @@
 
 /**
 	This declares its first argument to be a lazy-loading synthetic property, and other
-	arguments (if given) are dependent properties. References 'self' from within the macro.
+	arguments (if given) are dependent properties.
 	
 	Performs property validation of the arguments.
 
 	@return void
  */
-#define SyntheticProperty(...) \
+#define SyntheticProperty(className, ...) \
 ({ \
-	EBNValidateProperties(__VA_ARGS__)(__VA_ARGS__) \
+	if (0) \
+	{ \
+		className *__internalObserved; \
+		EBNValidatePathsInternal(__VA_ARGS__)(__VA_ARGS__) \
+	} \
 	[self syntheticProperty_MACRO_USE_ONLY:@#__VA_ARGS__]; \
 })
 
@@ -74,7 +81,7 @@
  */
 #define InvalidatePropertyValue(propertyName) \
 ({ \
-	ValidateProperty(propertyName); \
+	EBNValidatePaths(self, propertyName); \
 	[self invalidatePropertyValue:EBNStringify(propertyName)]; \
 })
 	// The loader block is an optional way to load properties. We use the term 'loading' because it's
@@ -84,9 +91,10 @@
 
 
 
-#pragma mark EBNLazyLoader Category
+#pragma mark - EBNLazyLoader Category
 
 @interface NSObject (EBNLazyLoader)
+
 
 /**
 	Declares a synthetic property. Must be a property of the receiver. This property will cache the result
@@ -94,7 +102,7 @@
 
 	@param property The property to make synthetic.
  */
-- (void) syntheticProperty:(NSString *) property;
++ (void) syntheticProperty:(nonnull NSString *) property;
 
 /**
 	Declares a synthetic property. Must be a property of the receiver. This property will cache the result
@@ -103,9 +111,9 @@
 	This property will automatically invalidate its value whenever the value in keyPath changes.
 
 	@param property The proprety to make synthetic
-	@param keyPath  A path to a value that is used to determine the value of property. Path must be rooted at self.
+	@param keyPathString  A path to a value that is used to determine the value of property. Path must be rooted at self.
  */
-- (void) syntheticProperty:(NSString *) property dependsOn:(NSString *) keyPath;
++ (void) syntheticProperty:(nonnull NSString *) property dependsOn:(nullable NSString *) keyPathString;
 
 /**
 	Declares a synthetic property. Must be a property of the receiver. This property will cache the result
@@ -114,10 +122,9 @@
 	This property will automatically invalidate its value whenever the value of any of the keyPaths change.
 
 	@param property The proprety to make synthetic
-	@param keyPath  An array of keypaths. Paths must be rooted at the receiver.
+	@param keyPaths  An array of keypaths. Paths must be rooted at the receiver.
  */
-- (void) syntheticProperty:(NSString *) property dependsOnPaths:(NSArray *) keyPaths;
-
++ (void) syntheticProperty:(nonnull NSString *) property dependsOnPaths:(nonnull NSArray *) keyPaths;
 
 /**
 	Declares a synthetic property. Must be a property of the receiver. This property will cache the result
@@ -139,7 +146,47 @@
 	@param property The property to make synthetic
 	@param loader   A selector
  */
-- (void) syntheticProperty:(NSString *) property withLazyLoaderMethod:(SEL) loader;
++ (void) syntheticProperty:(nonnull NSString *) property withLazyLoaderMethod:(nullable SEL) loader;
+
+/**
+	The SyntheticProperty() macro calls this method from within the macro. This method takes the property
+	to be made synthetic and any dependent paths as a single comma-separated string, because of how 
+	variadic marco arguments work.
+	
+	This method needs to exist because the SyntheticProperty() macro can't organize its argument list in such
+	a way that it can call syntheticProperty:dependsOnPaths:. But you can, and you should.
+*/
++ (void) syntheticProperty_MACRO_USE_ONLY:(nonnull NSString *) propertyAndPaths;
+
+
+/**
+	Declares a public non-mutable collection object to be a lazily loaded copy of a private mutable collection.
+	
+	If your class needs to expose an array as part of its API, and your object needs to modify the array internally,
+	it's safer if you make a NSArray public property with a custom getter that copies an internal NSMutableArray.
+	However, this breaks observation and produces new copies each time the array is accessed.
+	
+	Instead, you can use this method to bind the public and private properties. Put this method in your init,
+	listing the public and private collection properties (must be NSSet, NSDictionary, or NSArray for the moment).
+	
+	Mutating the private property will cause the public property to be invalidated. Accessing the public property
+	will cause the value to be copied and stored in the property's ivar. The copy occurs at most once per mutation
+	of the private property. Additionally, the public property can be observed, and will get updated/notified 
+	whenever the private property mutates.
+	
+	Important note: This cannot be turned on for some instances of a class and not others. Due to how it works,
+	it's partially global and partially per-instance. So, if you're going to use this in your class, make sure
+	it's on in all your classes' designated initializers.
+	
+	Important note 2: This method doesn't work when you need to synchronize access to the mutable collection;
+	luckily this method is a convenience for an observation you can roll yourself. Your observation block
+	can then do whatever thread synchroniztion is necessary.
+	
+	@param publicPropertyName		The name of the publically visible, immutable collection property
+	@param copyFromProperty			The name of the private, mutable collection property
+	
+*/
++ (void) publicCollection:(nonnull NSString *) publicPropertyName copiesFromPrivateCollection:(nonnull NSString *) copyFromProperty;
 
 
 /**
@@ -148,30 +195,31 @@
 
 	@param property The property to invalidate
  */
-- (void) invalidatePropertyValue:(NSString *) property;
+- (void) invalidatePropertyValue:(nonnull NSString *) property;
 
 /**
 	Mass-invalidates propeties.
 
 	@param properties A set of properties to invalidate.
  */
-- (void) invalidatePropertyValues:(NSSet *) properties;
+- (void) invalidatePropertyValues:(nonnull NSSet *) properties;
 
 /**
 	Invalidates all of the synthetic properties of the receiver.
  */
 - (void) invalidateAllSyntheticProperties;
 
-
 /**
-	Designed for use by macros. Takes the property to set up and all its dependent keyPaths
-	as a single string in the form @"propertyName, a.b.c, a.b.d"
+	TRUE if the receiver has at least one synthetic property that is currently marked valid.
+	FALSE if all properties are invalid, or if no properties are synthetic.
+*/
+- (BOOL) ebn_hasValidProperties;
 
-	@param propertyAndPaths A string produced by the SyntheticProperty() VA_ARGS macro
- */
-- (void) syntheticProperty_MACRO_USE_ONLY:(NSString *) propertyAndPaths;
 
 @end
+
+
+#pragma mark - Debugging Support
 
 @interface NSObject (EBNLazyLoaderDebugging)
 
@@ -180,14 +228,14 @@
 
 	@return A NSSet of valid properties
  */
-- (NSSet *) debug_validProperties;
+- (nullable NSSet *) debug_validProperties;
 
 /**
 	For debugging only, shows the set of currently invalid properties. Don't use this for production code.
 
 	@return A NSSet of invalid properties
  */
-- (NSSet *) debug_invalidProperties;
+- (nullable NSSet *) debug_invalidProperties;
 
 /**
 	This method is for debugging. If you're trying to use this method to implement some sort of
@@ -206,56 +254,5 @@
 - (void) debug_forceAllPropertiesValid;
 
 @end
-
-
-/**
-	In previous incarnations, LazyLoader was a base class for any class that had LazyLoadable properties.
-	The code base is now structured as a category on NSObject; this class is deprecated and is 
-	here for compatibility.
-*/
-@interface EBNLazyLoader : NSObject
-@end
-
-
-
-
-
-
-
-
-
-// Just don't look at the stuff below this line. You'll lose sanity. This stuff is used by
-// the SyntheticProperty() macro above, and isn't designed for direct use.
-/*********************************************************************************************/
-
-	// This macro is used by SyntheticProperty to ensure its arguments are actually properties
-	// of self. Do not call it directly.
-#define ValidateProperty(propertyName) \
-	if (0) \
-	{ \
-		__attribute__((unused)) __typeof__(self.propertyName) _EBNNotUsed = self.propertyName; \
-	}
-
-	// This mess of macros is how we handle iterating the va_args that SyntheticProperty takes into
-	// individual property calls. Each one checks the first property, and sends the rest to the n-1 version.
-#define ValidateProperty1(propertyName) ValidateProperty(propertyName);
-#define ValidateProperty2(propertyName, ...) ValidateProperty(propertyName); ValidateProperty1(__VA_ARGS__)
-#define ValidateProperty3(propertyName, ...) ValidateProperty(propertyName); ValidateProperty2(__VA_ARGS__)
-#define ValidateProperty4(propertyName, ...) ValidateProperty(propertyName); ValidateProperty3(__VA_ARGS__)
-#define ValidateProperty5(propertyName, ...) ValidateProperty(propertyName); ValidateProperty4(__VA_ARGS__)
-#define ValidateProperty6(propertyName, ...) ValidateProperty(propertyName); ValidateProperty5(__VA_ARGS__)
-#define ValidateProperty7(propertyName, ...) ValidateProperty(propertyName); ValidateProperty6(__VA_ARGS__)
-#define ValidateProperty8(propertyName, ...) ValidateProperty(propertyName); ValidateProperty7(__VA_ARGS__)
-#define ValidateProperty9(propertyName, ...) ValidateProperty(propertyName); ValidateProperty8(__VA_ARGS__)
-#define ValidateProperty10(propertyName, ...) ValidateProperty(propertyName); ValidateProperty9(__VA_ARGS__)
-#define ValidateProperty11(propertyName, ...) ValidateProperty(propertyName); ValidateProperty10(__VA_ARGS__)
-#define ValidateProperty12(propertyName, ...) ValidateProperty(propertyName); ValidateProperty11(__VA_ARGS__)
-#define ValidateProperty13(propertyName, ...) _Pragma("GCC error \"The SyntheticProperty macro supports 12 dependent properties max. Use the syntheticProperty:dependsOn: methods instead.\"")
-
-	// This is a trick to figure out which ValidateProperty<#> to start with, based on
-	// the number of arguments in varargs. Does not work with more then 12 arguments--
-	// just use the syntheticProperty:dependsOnPaths: method in that case.
-#define EBNValidateProperties(...) EBNValidateProperties_(,##__VA_ARGS__,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
-#define EBNValidateProperties_(a,b,c,d,e,f,g,h,i,j,k,l,m,n,count,...) ValidateProperty ## count
 
 
